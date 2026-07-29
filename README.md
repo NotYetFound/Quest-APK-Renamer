@@ -22,10 +22,11 @@
 > anti-tamper systems.
 
 > [!WARNING]
-> This project was created largely with AI assistance and has not received a
-> professional security audit. Treat current downloads as beta software, keep
-> backups of your original bundles and signing keys, and verify release
-> checksums before running an installer.
+> **This is a 100% AI-generated project.** The application code and
+> documentation were produced with AI under human direction. It has not
+> received a professional security audit. Treat current downloads as beta
+> software, keep backups of your original bundles and signing keys, and verify
+> release checksums before running an installer.
 
 ![Quest APK Renamer main window](docs/screenshots/main-window.png)
 
@@ -301,8 +302,20 @@ platform build details, and
 Version 1.8.0 includes staged source replacement, verified-install-only local
 cleanup, sequential bulk rename/install queues, and Windows/macOS/Linux
 packaging.
-Release artifacts still need hands-on smoke tests on their matching operating
-systems before a public release is marked stable.
+
+Platform testing is still limited:
+
+- **Windows:** partially tested by hand. Automated tests and release packaging
+  pass, and the Setup and portable builds should work.
+- **macOS:** not yet tested by hand. Automated Apple Silicon and Intel builds
+  pass, and both DMGs should work, but real-device feedback is especially
+  helpful.
+
+If you have any problems, please
+[open an issue](https://github.com/RockoTheeHut/Quest-APK-Renamer/issues/new/choose).
+I will investigate and fix it as soon as I can. Release artifacts still need
+hands-on smoke tests on their matching operating systems before a public
+release is marked stable.
 
 ## Privacy and safety
 
