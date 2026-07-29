@@ -23,10 +23,17 @@ body:
       options:
         - Windows 11
         - Windows 10
-        - Linux
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux x86_64
         - Other
     validations:
       required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version or Linux distribution
+      placeholder: "macOS 15.5, Fedora 44, Ubuntu 24.04, etc."
   - type: input
     id: quest
     attributes:

@@ -1,0 +1,77 @@
+name: Install or Quest connection problem
+description: Get help installing the desktop app or connecting/installing to a Quest
+title: "[Install help]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not upload APKs, OBBs, signing keys, paid game data, headset serials,
+        or logs containing private paths.
+  - type: dropdown
+    id: desktop-platform
+    attributes:
+      label: Desktop platform
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux x86_64
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Where are you stuck?
+      options:
+        - Installing Quest APK Renamer
+        - Opening Quest APK Renamer
+        - Connecting or authorizing the Quest
+        - Installing the APK
+        - Transferring or verifying OBB files
+        - Updating an already installed renamed game
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      placeholder: "1.8.0"
+    validations:
+      required: true
+  - type: input
+    id: quest
+    attributes:
+      label: Quest model
+      placeholder: "Quest 2, Quest 3, Quest 3S, or not connected yet"
+  - type: textarea
+    id: status
+    attributes:
+      label: What does the app show?
+      description: Include the device status pill and the last plain-language message.
+    validations:
+      required: true
+  - type: textarea
+    id: attempts
+    attributes:
+      label: What have you tried?
+      description: Mention USB authorization, cables, restarts, or retry actions.
+  - type: textarea
+    id: log
+    attributes:
+      label: Sanitized details log
+      description: Remove game names, serials, usernames, private paths, and signing data.
+      render: text
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Authorization and privacy
+      options:
+        - label: I own or am authorized to install and modify the software involved.
+          required: true
+        - label: I removed copyrighted files, secrets, serials, and identifying information.
+          required: true

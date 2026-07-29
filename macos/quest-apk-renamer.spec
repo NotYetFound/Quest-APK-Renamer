@@ -6,7 +6,7 @@ from pathlib import Path
 from PyInstaller.utils.hooks import collect_data_files
 
 
-project_dir = Path(SPECPATH).parent.parent
+project_dir = Path(SPECPATH).parent
 macos_dir = project_dir / "macos"
 target_arch = os.environ.get("MACOS_TARGET_ARCH") or None
 codesign_identity = os.environ.get("MACOS_CODESIGN_IDENTITY") or None

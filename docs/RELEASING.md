@@ -63,6 +63,16 @@ On both an Apple Silicon Mac and an Intel Mac:
   `~/Library/Application Support/Quest APK Renamer/`; and
 - remove the app and confirm the signing-key directory is preserved.
 
+On a Linux x86_64 computer:
+
+- extract the release archive and run `./install.sh`;
+- launch the app from the desktop app launcher;
+- confirm Java, `keytool`, ADB, Apktool, and the signer are detected;
+- confirm drag-and-drop and the native folder picker;
+- connect an authorized Quest and complete one build/install/verify cycle;
+- run `./uninstall.sh`; and
+- confirm `~/.local/share/quest-apk-renamer/` and its signing key are preserved.
+
 ## 3. Review release materials
 
 - Confirm all screenshots match the current UI.
@@ -102,22 +112,25 @@ The release workflows build:
 - `Quest-APK-Renamer-1.8.0-Windows-portable.zip`;
 - `Quest-APK-Renamer-1.8.0-Setup.exe`;
 - `Quest-APK-Renamer-1.8.0-macOS-arm64.dmg`;
-- `Quest-APK-Renamer-1.8.0-macOS-x86_64.dmg`; and
+- `Quest-APK-Renamer-1.8.0-macOS-x86_64.dmg`;
+- `Quest-APK-Renamer-1.8.0-Linux-x86_64.tar.gz`; and
 - platform-specific `SHA256SUMS-*.txt` files.
 
 A `v*` tag creates a GitHub release automatically. A tag may match the app
 version exactly or add a prerelease suffix. For example, app version `1.8.0`
 accepts `v1.8.0` or `v1.8.0-beta.1`. Tags containing a hyphen are marked as
-prereleases. Create the stable `v1.8.0` tag only after the uploaded Windows
-and macOS packages pass their complete desktop and Quest smoke tests.
+prereleases. Create the stable `v1.8.0` tag only after the uploaded Windows,
+macOS, and Linux packages pass their complete desktop and Quest smoke tests.
 
 ## 5. Before publishing
 
 - Download the workflow artifacts onto a separate Windows machine.
 - Download each DMG onto a matching Apple Silicon or Intel Mac.
+- Download the Linux archive onto a clean x86_64 Linux computer.
 - Verify every SHA-256 entry.
 - Install and launch the exact uploaded installer.
 - Install and launch both exact uploaded DMGs.
+- Install and launch the exact uploaded Linux bundle.
 - Review the generated GitHub release notes.
-- Mark the release stable only after the Windows, macOS, and Quest smoke tests
-  pass.
+- Mark the release stable only after the Windows, macOS, Linux, and Quest
+  smoke tests pass.

@@ -14,7 +14,13 @@ if (-not (Test-Path $Python)) {
 }
 
 & $Python -m pip install --upgrade pip
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to update pip."
+}
 & $Python -m pip install -r (Join-Path $PSScriptRoot "requirements-build.txt")
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to install Windows build dependencies."
+}
 
 if (-not $SkipBootstrap) {
     & (Join-Path $PSScriptRoot "bootstrap-dependencies.ps1")
@@ -33,7 +39,13 @@ if (-not (Test-Path (Join-Path $PSScriptRoot "runtime\platform-tools\adb.exe")))
 Push-Location $ProjectDir
 try {
     & $Python -m unittest discover -s tests -v
+    if ($LASTEXITCODE -ne 0) {
+        throw "The test suite failed."
+    }
     & $Python -m PyInstaller --noconfirm --clean (Join-Path $PSScriptRoot "quest-apk-renamer.spec")
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed."
+    }
 
     if ($BuildInstaller) {
         $IsccCandidates = @(
@@ -45,6 +57,9 @@ try {
             throw "Inno Setup 6 was not found. Install it or omit -BuildInstaller."
         }
         & $Iscc (Join-Path $PSScriptRoot "installer.iss")
+        if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup failed."
+        }
     }
 }
 finally {

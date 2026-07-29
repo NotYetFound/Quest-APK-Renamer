@@ -1,0 +1,116 @@
+name: Build Linux app
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "quest_apk_renamer.py"
+      - "tests/**"
+      - "assets/**"
+      - "tools/**"
+      - "vendor/**"
+      - "linux/**"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
+      - ".github/workflows/linux-build.yml"
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+    paths:
+      - "quest_apk_renamer.py"
+      - "tests/**"
+      - "assets/**"
+      - "tools/**"
+      - "vendor/**"
+      - "linux/**"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
+      - "docs/releases/**"
+      - ".github/workflows/linux-build.yml"
+
+permissions:
+  contents: write
+
+env:
+  APP_VERSION: "1.8.0"
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes python3-tk python3-venv curl unzip
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          stable_tag="v$APP_VERSION"
+          if [[ "$GITHUB_REF_NAME" != "$stable_tag" && "$GITHUB_REF_NAME" != "$stable_tag"-* ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match app version $stable_tag." >&2
+            exit 1
+          fi
+
+      - name: Build and test
+        run: |
+          chmod +x linux/build.sh linux/bootstrap-dependencies.sh
+          ./linux/build.sh
+
+      - name: Upload Linux release bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: Quest-APK-Renamer-${{ env.APP_VERSION }}-Linux-x86_64
+          path: |
+            dist/Quest-APK-Renamer-${{ env.APP_VERSION }}-Linux-x86_64.tar.gz
+            dist/SHA256SUMS-Linux-x86_64.txt
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Download Linux bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: Quest-APK-Renamer-${{ env.APP_VERSION }}-Linux-x86_64
+          path: dist
+
+      - name: Create or update tagged GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          title="Quest APK Renamer ${tag#v}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            release_args=(release create "$tag" --title "$title")
+            notes_file="docs/releases/v$APP_VERSION.md"
+            if [[ -f "$notes_file" ]]; then
+              release_args+=(--notes-file "$notes_file")
+            else
+              release_args+=(--generate-notes)
+            fi
+            if [[ "$tag" == *-* ]]; then
+              release_args+=(--prerelease)
+            fi
+            if ! gh "${release_args[@]}"; then
+              gh release view "$tag" >/dev/null
+            fi
+          fi
+          gh release upload "$tag" dist/* --clobber

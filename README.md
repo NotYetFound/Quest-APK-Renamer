@@ -21,6 +21,12 @@
 > It does not bypass store ownership, licensing, online entitlement, or
 > anti-tamper systems.
 
+> [!WARNING]
+> This project was created largely with AI assistance and has not received a
+> professional security audit. Treat current downloads as beta software, keep
+> backups of your original bundles and signing keys, and verify release
+> checksums before running an installer.
+
 ![Quest APK Renamer main window](docs/screenshots/main-window.png)
 
 ## What it does
@@ -92,17 +98,26 @@ Verify the DMG against its matching `SHA256SUMS-macOS-*.txt` file.
 
 ### Linux
 
-Download the source archive from the release, extract it, and run:
+Download:
 
-```bash
-chmod +x launch.sh
-./launch.sh
+```text
+Quest-APK-Renamer-1.8.0-Linux-x86_64.tar.gz
 ```
 
-Linux requires Python 3.10 or newer, Tk, Java with `keytool`, and ADB. Apktool,
-the signer, and native drag-and-drop support are included in the repository.
+Extract it, open a terminal inside the extracted folder, and run:
 
-The app's **Add to Applications** button creates a searchable launcher entry.
+```bash
+./install.sh
+```
+
+The portable bundle includes Python/Tk, Java with `keytool`, ADB, Apktool, the
+signer, and native drag-and-drop support. Installation is per-user, needs no
+administrator access, and adds Quest APK Renamer to the app launcher. You can
+also run the bundled **Quest APK Renamer** executable directly.
+
+The prebuilt Linux package currently supports x86_64. Other Linux
+architectures can run from source. Verify the archive against
+`SHA256SUMS-Linux-x86_64.txt`.
 
 ## Quick start
 
@@ -270,19 +285,24 @@ Build the macOS app and architecture-specific DMG on a Mac:
 ./macos/build.sh
 ```
 
-See [windows/README.md](windows/README.md) and
-[macos/README.md](macos/README.md) for platform build details, and
+Build the self-contained Linux x86_64 package:
+
+```bash
+./linux/build.sh
+```
+
+See [windows/README.md](windows/README.md),
+[macos/README.md](macos/README.md), and [linux/README.md](linux/README.md) for
+platform build details, and
 [docs/RELEASING.md](docs/RELEASING.md) for the complete release checklist.
 
 ## Project status
 
 Version 1.8.0 includes staged source replacement, verified-install-only local
-cleanup, sequential bulk rename/install queues, and Windows/macOS packaging.
+cleanup, sequential bulk rename/install queues, and Windows/macOS/Linux
+packaging.
 Release artifacts still need hands-on smoke tests on their matching operating
 systems before a public release is marked stable.
-
-The optional recipe-based patch/tweak system is only planned. It is not part of
-the current app. See [ROADMAP.md](ROADMAP.md).
 
 ## Privacy and safety
 

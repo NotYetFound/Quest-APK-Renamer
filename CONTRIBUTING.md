@@ -30,8 +30,9 @@ Launch the app from the repository:
 ```
 
 Platform packaging instructions are in
-[windows/README.md](windows/README.md) and
-[macos/README.md](macos/README.md).
+[windows/README.md](windows/README.md),
+[macos/README.md](macos/README.md), and
+[linux/README.md](linux/README.md).
 
 ## Pull requests
 

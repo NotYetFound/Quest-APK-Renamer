@@ -11,6 +11,9 @@ All notable changes to Quest APK Renamer are recorded here.
 - macOS Finder pickers, Finder Trash support, and user Applications install.
 - GitHub Actions builds for both macOS architectures, with optional Developer
   ID signing and notarization.
+- Self-contained Linux x86_64 package with bundled Java, ADB, and a per-user
+  app-launcher installer.
+- GitHub issue forms for installation help and release-package problems.
 - Opt-in source-folder replacement using a completed sibling staging build.
 - Rollback to the original folder if replacement activation fails.
 - Recoverable original-folder cleanup through Trash after replacement.
@@ -32,6 +35,7 @@ All notable changes to Quest APK Renamer are recorded here.
   preflight action.
 - Reworked advanced switches into a compact two-column layout.
 - Moved Bulk tools into the always-visible main footer.
+- Added a prominent AI-assistance and beta-safety disclosure to the README.
 
 ### Safety
 

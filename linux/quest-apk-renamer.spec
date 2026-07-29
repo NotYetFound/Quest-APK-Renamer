@@ -6,20 +6,20 @@ from PyInstaller.utils.hooks import collect_data_files
 
 
 project_dir = Path(SPECPATH).parent
-windows_dir = project_dir / "windows"
+linux_dir = project_dir / "linux"
 
 datas = [
     (str(project_dir / "assets"), "assets"),
     (str(project_dir / "tools"), "tools"),
     (str(project_dir / "LICENSE"), "."),
     (str(project_dir / "THIRD_PARTY_NOTICES.md"), "."),
-    (str(windows_dir / "runtime" / "java"), "runtime/java"),
+    (str(linux_dir / "runtime" / "java"), "runtime/java"),
     (
-        str(windows_dir / "runtime" / "platform-tools"),
+        str(linux_dir / "runtime" / "platform-tools"),
         "runtime/platform-tools",
     ),
 ]
-dependency_manifest = windows_dir / "runtime" / "DEPENDENCY-HASHES.txt"
+dependency_manifest = linux_dir / "runtime" / "DEPENDENCY-HASHES.txt"
 if dependency_manifest.is_file():
     datas.append((str(dependency_manifest), "runtime"))
 datas += collect_data_files("tkinterdnd2")
@@ -50,12 +50,6 @@ exe = EXE(
     upx=True,
     console=False,
     disable_windowed_traceback=False,
-    argv_emulation=False,
-    target_arch=None,
-    codesign_identity=None,
-    entitlements_file=None,
-    icon=str(project_dir / "assets" / "quest-apk-renamer.ico"),
-    version=str(windows_dir / "version-info.txt"),
 )
 
 coll = COLLECT(

@@ -1,3 +1,4 @@
+import os
 import tempfile
 import threading
 import unittest
@@ -14,6 +15,15 @@ class RenamerTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def assertSamePath(self, actual, expected):
+        self.assertEqual(Path(actual).resolve(), Path(expected).resolve())
+
+    def assertSamePaths(self, actual, expected):
+        self.assertEqual(
+            [Path(path).resolve() for path in actual],
+            [Path(path).resolve() for path in expected],
+        )
 
     def test_package_validation(self):
         self.assertTrue(app.is_valid_package("com.example.game"))
@@ -102,7 +112,7 @@ class RenamerTests(unittest.TestCase):
 
         found, _skipped = app.discover_bundle_folders(self.tmp_path)
 
-        self.assertEqual(found, [first, second])
+        self.assertSamePaths(found, [first, second])
 
     def test_staged_replacement_activates_output_after_completion(self):
         source = self.tmp_path / "Game"
@@ -128,7 +138,7 @@ class RenamerTests(unittest.TestCase):
             fake_trash,
         )
 
-        self.assertEqual(output, source)
+        self.assertSamePath(output, source)
         self.assertIsNone(backup)
         self.assertIsNone(error)
         self.assertEqual(trashed, [b"original"])
@@ -153,7 +163,7 @@ class RenamerTests(unittest.TestCase):
             lambda _path: "simulated Trash failure",
         )
 
-        self.assertEqual(output, source)
+        self.assertSamePath(output, source)
         self.assertIsNotNone(backup)
         self.assertEqual(error, "simulated Trash failure")
         self.assertEqual((backup / "original.apk").read_bytes(), b"original")
@@ -218,7 +228,7 @@ class RenamerTests(unittest.TestCase):
         executable.parent.mkdir(parents=True)
         executable.write_bytes(b"binary")
 
-        self.assertEqual(
+        self.assertSamePath(
             app.find_macos_app_bundle(executable),
             self.tmp_path / "Quest APK Renamer.app",
         )
@@ -367,8 +377,10 @@ class RenamerTests(unittest.TestCase):
             "windows/version-info.txt": f"u'ProductVersion', u'{version}'",
             ".github/workflows/windows-build.yml": f'APP_VERSION: "{version}"',
             ".github/workflows/macos-build.yml": f'APP_VERSION: "{version}"',
+            ".github/workflows/linux-build.yml": f'APP_VERSION: "{version}"',
             "macos/quest-apk-renamer.spec": f'version="{version}"',
             "macos/build.sh": f'app_version="{version}"',
+            "linux/build.sh": f'app_version="{version}"',
             "README.md": f"version-{version}-",
             "CHANGELOG.md": f"## [{version}]",
         }
@@ -390,11 +402,17 @@ class RenamerTests(unittest.TestCase):
                 self.assertTrue(content.startswith(b"\x89PNG\r\n\x1a\n"))
                 self.assertGreater(len(content), 10_000)
 
-    def test_macos_build_scripts_are_executable(self):
+    def test_posix_build_scripts_are_executable(self):
+        if os.name == "nt":
+            self.skipTest("Windows does not preserve POSIX executable mode bits")
         project_root = Path(app.__file__).resolve().parent
         for relative_path in (
             "macos/build.sh",
             "macos/bootstrap-dependencies.sh",
+            "linux/build.sh",
+            "linux/bootstrap-dependencies.sh",
+            "linux/install.sh",
+            "linux/uninstall.sh",
         ):
             with self.subTest(path=relative_path):
                 mode = (project_root / relative_path).stat().st_mode
@@ -694,7 +712,7 @@ class RenamerTests(unittest.TestCase):
         self.assertEqual(bundle.package_name, "com.example.game")
         self.assertEqual(bundle.version_code, "42")
         self.assertEqual(bundle.game_name, "Example Game")
-        self.assertEqual(bundle.obbs, [obb])
+        self.assertSamePaths(bundle.obbs, [obb])
 
     def test_detect_whole_game_folder(self):
         apk = self.tmp_path / "com.example.game.apk"
@@ -705,8 +723,8 @@ class RenamerTests(unittest.TestCase):
 
         bundle = app.detect_bundle_from_folder(self.tmp_path)
 
-        self.assertEqual(bundle.root, self.tmp_path)
-        self.assertEqual(bundle.apk, apk)
+        self.assertSamePath(bundle.root, self.tmp_path)
+        self.assertSamePath(bundle.apk, apk)
         self.assertEqual(bundle.package_name, "com.example.game")
         self.assertEqual(bundle.version_code, "42")
 

@@ -20,6 +20,8 @@ windows/.venv/
 windows/runtime/
 macos/.venv/
 macos/runtime/
+linux/.venv/
+linux/runtime/
 *.spec.bak
 *.log
 
@@ -51,3 +53,14 @@ tmp/
 temp/
 *.tmp
 *.bak
+
+# Private planning and AI-assistant workspace files
+ROADMAP.md
+PLANS.md
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+.codex/
+.claude/
+.cursor/
+.aider*
