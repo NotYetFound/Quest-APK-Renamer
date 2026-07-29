@@ -80,6 +80,7 @@ class RenamerTests(unittest.TestCase):
             stdout=f"{first}\n{second}\n",
         )
         with (
+            mock.patch.object(app.sys, "platform", "linux"),
             mock.patch.object(
                 app.shutil,
                 "which",
