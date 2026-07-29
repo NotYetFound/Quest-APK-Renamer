@@ -22,11 +22,8 @@
 > anti-tamper systems.
 
 > [!WARNING]
-> **This is a 100% AI-generated project.** The application code and
-> documentation were produced with AI under human direction. It has not
-> received a professional security audit. Treat current downloads as beta
-> software, keep backups of your original bundles and signing keys, and verify
-> release checksums before running an installer.
+> This app was made 100% by AI, so expect some bugs and use caution. Keep
+> backups of your original bundles and signing keys.
 
 ![Quest APK Renamer main window](docs/screenshots/main-window.png)
 
