@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.9.0" src="https://img.shields.io/badge/version-1.9.0-6f5ef7">
+  <img alt="Version 1.3.0 beta 1" src="https://img.shields.io/badge/version-1.3.0--beta.1-6f5ef7">
   <img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-26334d">
   <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
@@ -52,15 +52,15 @@ failed-OBB retry, signing-key backups, and a persistent activity log.
 
 ## Download
 
-Open the [1.9.0 beta release](../../releases/tag/v1.9.0-beta.1) and download the
+Open the [1.3.0 beta 1 release](../../releases/tag/v1.3.0-beta.1) and download the
 package for your computer:
 
 | Platform | File |
 | --- | --- |
-| Windows | `Quest-APK-Renamer-1.9.0-Setup.exe` |
-| Apple Silicon Mac | `Quest-APK-Renamer-1.9.0-macOS-arm64.dmg` |
-| Intel Mac | `Quest-APK-Renamer-1.9.0-macOS-x86_64.dmg` |
-| Linux x86_64 | `Quest-APK-Renamer-1.9.0-Linux-x86_64.tar.gz` |
+| Windows | `Quest-APK-Renamer-1.3.0-Setup.exe` |
+| Apple Silicon Mac | `Quest-APK-Renamer-1.3.0-macOS-arm64.dmg` |
+| Intel Mac | `Quest-APK-Renamer-1.3.0-macOS-x86_64.dmg` |
+| Linux x86_64 | `Quest-APK-Renamer-1.3.0-Linux-x86_64.tar.gz` |
 
 On Linux, extract the archive and run `./install.sh`.
 

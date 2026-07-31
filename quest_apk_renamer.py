@@ -64,7 +64,7 @@ from apk_analysis import (
 )
 
 APP_NAME = "Quest APK Renamer"
-APP_VERSION = "1.9.0"
+APP_VERSION = "1.3.0"
 PACKAGE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$")
 OBB_RE = re.compile(r"^(main|patch)\.(\d+)\.(.+)\.obb$", re.IGNORECASE)
 

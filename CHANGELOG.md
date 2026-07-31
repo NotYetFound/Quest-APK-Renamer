@@ -4,13 +4,22 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.3.0] - 2026-07-31
+
 ### Added
 
 - Opt-in older-firmware compatibility for APKs containing the ARM64
   `libovrplatformloader.so`, with automatic availability detection, pinned
   upstream provenance, checksum verification, and build-report auditing.
 
-## [1.9.0] - 2026-07-29
+### Changed
+
+- Simplified feature requests by removing the app-version question and adding
+  an `All` operating-system choice.
+- Corrected the project version sequence: the earlier 1.7, 1.8, and 1.9
+  development milestones map to 1.0, 1.1, and 1.2 respectively.
+
+## [1.2.0] - 2026-07-29
 
 ### Added
 
@@ -45,7 +54,7 @@ All notable changes to Quest APK Renamer are recorded here.
 - Fall back to the standard folder picker if the native drag-and-drop backend
   cannot load, instead of preventing the app from launching.
 
-## [1.8.0] - 2026-07-29
+## [1.1.0] - 2026-07-29
 
 ### Added
 
@@ -89,7 +98,7 @@ All notable changes to Quest APK Renamer are recorded here.
 - Nested and duplicate bulk selections are rejected.
 - Bulk cancellation stops at the existing safe stage boundaries.
 
-## [1.7.0] - 2026-07-28
+## [1.0.0] - 2026-07-28
 
 ### Added
 
@@ -117,6 +126,6 @@ All notable changes to Quest APK Renamer are recorded here.
 - Game-facing text and assets are intentionally excluded.
 - Cleanup refuses folders without the managed-output marker.
 
-[1.7.0]: ../../releases/tag/v1.7.0
-[1.8.0]: ../../releases/tag/v1.8.0-beta.1
-[1.9.0]: ../../releases/tag/v1.9.0-beta.1
+[1.1.0]: ../../releases/tag/v1.8.0-beta.1
+[1.2.0]: ../../releases/tag/v1.9.0-beta.1
+[1.3.0]: ../../releases/tag/v1.3.0-beta.1

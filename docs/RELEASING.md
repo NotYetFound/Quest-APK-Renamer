@@ -103,23 +103,23 @@ stapling. Never place these values in the repository or workflow files.
 For the current cross-platform validation build, create a prerelease tag:
 
 ```bash
-git tag -a v1.9.0-beta.1 -m "Quest APK Renamer 1.9.0 beta 1"
-git push origin v1.9.0-beta.1
+git tag -a v1.3.0-beta.1 -m "Quest APK Renamer 1.3.0 beta 1"
+git push origin v1.3.0-beta.1
 ```
 
 The release workflows build:
 
-- `Quest-APK-Renamer-1.9.0-Windows-portable.zip`;
-- `Quest-APK-Renamer-1.9.0-Setup.exe`;
-- `Quest-APK-Renamer-1.9.0-macOS-arm64.dmg`;
-- `Quest-APK-Renamer-1.9.0-macOS-x86_64.dmg`;
-- `Quest-APK-Renamer-1.9.0-Linux-x86_64.tar.gz`; and
+- `Quest-APK-Renamer-1.3.0-Windows-portable.zip`;
+- `Quest-APK-Renamer-1.3.0-Setup.exe`;
+- `Quest-APK-Renamer-1.3.0-macOS-arm64.dmg`;
+- `Quest-APK-Renamer-1.3.0-macOS-x86_64.dmg`;
+- `Quest-APK-Renamer-1.3.0-Linux-x86_64.tar.gz`; and
 - platform-specific `SHA256SUMS-*.txt` files.
 
 A `v*` tag creates a GitHub release automatically. A tag may match the app
-version exactly or add a prerelease suffix. For example, app version `1.9.0`
-accepts `v1.9.0` or `v1.9.0-beta.1`. Tags containing a hyphen are marked as
-prereleases. Create the stable `v1.9.0` tag only after the uploaded Windows,
+version exactly or add a prerelease suffix. For example, app version `1.3.0`
+accepts `v1.3.0` or `v1.3.0-beta.1`. Tags containing a hyphen are marked as
+prereleases. Create the stable `v1.3.0` tag only after the uploaded Windows,
 macOS, and Linux packages pass their complete desktop and Quest smoke tests.
 
 ## 5. Before publishing

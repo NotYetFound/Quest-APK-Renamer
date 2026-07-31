@@ -23,7 +23,7 @@ The portable application is created under:
 dist\Quest APK Renamer\
 ```
 
-To also create `Quest-APK-Renamer-1.9.0-Setup.exe`, install Inno Setup 6 and
+To also create `Quest-APK-Renamer-1.3.0-Setup.exe`, install Inno Setup 6 and
 run:
 
 ```powershell

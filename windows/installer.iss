@@ -1,5 +1,5 @@
 #define MyAppName "Quest APK Renamer"
-#define MyAppVersion "1.9.0"
+#define MyAppVersion "1.3.0"
 #define MyAppExeName "Quest APK Renamer.exe"
 
 [Setup]

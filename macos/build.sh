@@ -6,7 +6,7 @@ project_dir="$(cd "$script_dir/.." && pwd)"
 runtime_dir="$script_dir/runtime"
 venv_dir="$script_dir/.venv"
 python_bin="$venv_dir/bin/python"
-app_version="1.9.0"
+app_version="1.3.0"
 skip_bootstrap=0
 build_dmg=1
 

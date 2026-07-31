@@ -5,28 +5,17 @@ labels:
   - enhancement
 body:
   - type: dropdown
-    id: version
-    attributes:
-      label: App version
-      description: Choose the version this idea relates to, if any.
-      options:
-        - 1.9.0 (beta 1)
-        - 1.8.0 (beta 1)
-        - Development/source build
-        - Not version-specific / not sure
-    validations:
-      required: true
-  - type: dropdown
     id: operating-system
     attributes:
       label: Operating system
       options:
+        - All
         - Windows 11
         - Windows 10
         - macOS (Apple Silicon)
         - macOS (Intel)
         - Linux x86_64
-        - Not OS-specific / not sure
+        - Other / not sure
     validations:
       required: true
   - type: textarea
