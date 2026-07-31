@@ -80,14 +80,14 @@ jobs:
           }
 
       - name: Upload portable Windows app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Quest-APK-Renamer-${{ env.APP_VERSION }}-Windows-portable
           path: dist/Quest APK Renamer/
           if-no-files-found: error
 
       - name: Upload Windows release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Quest-APK-Renamer-${{ env.APP_VERSION }}-Windows-release
           path: |

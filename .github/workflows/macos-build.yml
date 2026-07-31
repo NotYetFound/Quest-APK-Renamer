@@ -138,7 +138,7 @@ jobs:
           fi
 
       - name: Upload macOS release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Quest-APK-Renamer-${{ env.APP_VERSION }}-macOS-${{ matrix.arch }}
           path: |
