@@ -115,7 +115,10 @@ install them one at a time. One failed item does not stop the rest of the queue.
 
 **Options & tools** contains less common settings, including custom output
 folders, source replacement, cleanup, Android-tool repair, signing-key backup,
-update checks, and debug-log export.
+update checks, debug-log export, and an optional older-firmware compatibility
+patch. That patch is only offered when an APK contains the supported ARM64
+platform loader, stays off by default, and cannot add APIs missing from the
+headset firmware.
 
 ![APK analysis and rename preview](docs/screenshots/apk-analysis.png)
 

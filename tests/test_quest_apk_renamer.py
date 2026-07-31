@@ -2,6 +2,7 @@ import os
 import tempfile
 import threading
 import unittest
+import zipfile
 from pathlib import Path
 from unittest import mock
 
@@ -33,6 +34,66 @@ class RenamerTests(unittest.TestCase):
         self.assertFalse(app.is_valid_package("onepart"))
         self.assertFalse(app.is_valid_package("com.example.bad-name"))
         self.assertFalse(app.is_valid_package("../not.a.package"))
+
+    def test_apk_legacy_loader_detection_only_accepts_arm64_library(self):
+        apk = self.tmp_path / "game.apk"
+        with zipfile.ZipFile(apk, "w") as archive:
+            archive.writestr(
+                "lib/arm64-v8a/libovrplatformloader.so",
+                b"arm64 loader",
+            )
+            archive.writestr(
+                "lib/armeabi-v7a/libovrplatformloader.so",
+                b"arm loader",
+            )
+            archive.writestr(
+                "assets/lib/arm64-v8a/libovrplatformloader.so",
+                b"asset",
+            )
+
+        self.assertEqual(
+            app.apk_legacy_loader_entries(apk),
+            ["lib/arm64-v8a/libovrplatformloader.so"],
+        )
+
+    def test_bundled_legacy_loader_checksum_and_patch_report(self):
+        decoded = self.tmp_path / "decoded"
+        target = decoded / "lib" / "arm64-v8a" / app.LEGACY_LOADER_NAME
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"original loader")
+        original_hash = app.sha256_file(target)
+        messages = []
+
+        report = app.apply_legacy_loader_patch(decoded, log=messages.append)
+
+        self.assertEqual(app.verify_legacy_loader_asset(), app.LEGACY_LOADER_SHA256)
+        self.assertEqual(app.sha256_file(target), app.LEGACY_LOADER_SHA256)
+        self.assertEqual(report["target"], "lib/arm64-v8a/libovrplatformloader.so")
+        self.assertEqual(report["original_sha256"], original_hash)
+        self.assertEqual(report["replacement_sha256"], app.LEGACY_LOADER_SHA256)
+        self.assertEqual(
+            report["source"]["revision"],
+            app.LEGACY_LOADER_SOURCE_REVISION,
+        )
+        self.assertTrue(any("Applied older firmware" in line for line in messages))
+
+    def test_legacy_loader_patch_rejects_missing_target_and_bad_asset(self):
+        decoded = self.tmp_path / "decoded"
+        decoded.mkdir()
+        with self.assertRaisesRegex(app.UserError, "does not contain"):
+            app.apply_legacy_loader_patch(decoded, log=lambda _message: None)
+
+        target = decoded / "lib" / "arm64-v8a" / app.LEGACY_LOADER_NAME
+        target.parent.mkdir(parents=True)
+        target.write_bytes(b"original")
+        bad_replacement = self.tmp_path / app.LEGACY_LOADER_NAME
+        bad_replacement.write_bytes(b"not the pinned loader")
+        with self.assertRaisesRegex(app.UserError, "failed its checksum"):
+            app.apply_legacy_loader_patch(
+                decoded,
+                log=lambda _message: None,
+                replacement=bad_replacement,
+            )
 
     def test_package_tag_presets_insert_a_separate_segment(self):
         self.assertEqual(

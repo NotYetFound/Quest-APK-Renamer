@@ -27,6 +27,7 @@ import traceback
 import urllib.error
 import urllib.request
 import webbrowser
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import (
@@ -87,6 +88,23 @@ SIGNER_JAR = TOOLS_DIR / "uber-apk-signer.jar"
 TOOL_INFO_FILE = TOOLS_DIR / "versions.json"
 RUNTIME_DIR = RESOURCE_DIR / "runtime"
 SIGNER_REGISTRY_FILE = RESOURCE_DIR / "resources" / "known-signers.json"
+LEGACY_LOADER_NAME = "libovrplatformloader.so"
+LEGACY_LOADER_PATH = (
+    RESOURCE_DIR
+    / "assets"
+    / "patches"
+    / "ovrplatform"
+    / LEGACY_LOADER_NAME
+)
+LEGACY_LOADER_SHA256 = (
+    "1f6d43e6b7b82960efdaf6596953272c32022316375ddca1eddc56e15b026ca2"
+)
+LEGACY_LOADER_SOURCE_REVISION = "9ffe7009ae10601bf72ed57455d31ef051495f84"
+LEGACY_LOADER_SOURCE_URL = (
+    "https://github.com/veygax/eventhorizon/blob/"
+    f"{LEGACY_LOADER_SOURCE_REVISION}/app/src/main/assets/ovrplatform/"
+    f"{LEGACY_LOADER_NAME}"
+)
 RELEASE_API_URL = (
     "https://api.github.com/repos/RockoTheeHut/Quest-APK-Renamer/releases/latest"
 )
@@ -300,6 +318,85 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def apk_legacy_loader_entries(apk: Path) -> list[str]:
+    """Return compatible ARM64 platform-loader entries without extracting an APK."""
+
+    try:
+        with zipfile.ZipFile(apk) as archive:
+            entries = []
+            for item in archive.infolist():
+                parts = item.filename.replace("\\", "/").strip("/").split("/")
+                if (
+                    not item.is_dir()
+                    and len(parts) == 3
+                    and parts[0] == "lib"
+                    and parts[1] == "arm64-v8a"
+                    and parts[2] == LEGACY_LOADER_NAME
+                ):
+                    entries.append("/".join(parts))
+            return sorted(set(entries))
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise UserError(
+            f"The APK could not be checked for compatibility: {exc}"
+        ) from exc
+
+
+def verify_legacy_loader_asset(replacement: Path | None = None) -> str:
+    """Verify the pinned replacement before it can be copied into an APK."""
+
+    replacement = replacement or LEGACY_LOADER_PATH
+    if not replacement.is_file():
+        raise UserError(
+            "The bundled older-firmware compatibility file is missing. "
+            "Reinstall or update Quest APK Renamer."
+        )
+    actual = sha256_file(replacement)
+    if actual != LEGACY_LOADER_SHA256:
+        raise UserError(
+            "The bundled older-firmware compatibility file failed its checksum. "
+            "The patch was stopped before rebuilding the APK."
+        )
+    return actual
+
+
+def apply_legacy_loader_patch(
+    decoded: Path,
+    log,
+    replacement: Path | None = None,
+) -> dict[str, object]:
+    """Replace an existing ARM64 platform loader and return auditable metadata."""
+
+    replacement = replacement or LEGACY_LOADER_PATH
+    replacement_hash = verify_legacy_loader_asset(replacement)
+    target = decoded / "lib" / "arm64-v8a" / LEGACY_LOADER_NAME
+    if not target.is_file():
+        raise UserError(
+            "Older firmware compatibility was enabled, but this APK does not "
+            f"contain lib/arm64-v8a/{LEGACY_LOADER_NAME}."
+        )
+    original_hash = sha256_file(target)
+    shutil.copy2(replacement, target)
+    if sha256_file(target) != replacement_hash:
+        raise UserError(
+            "The older-firmware compatibility file could not be verified after copying."
+        )
+    relative_target = target.relative_to(decoded).as_posix()
+    log(f"Applied older firmware compatibility to {relative_target}.")
+    return {
+        "id": "older-firmware-compatibility",
+        "label": "Older firmware compatibility",
+        "target": relative_target,
+        "original_sha256": original_hash,
+        "replacement_sha256": replacement_hash,
+        "already_compatible": original_hash == replacement_hash,
+        "source": {
+            "project": "veygax/eventhorizon",
+            "revision": LEGACY_LOADER_SOURCE_REVISION,
+            "url": LEGACY_LOADER_SOURCE_URL,
+        },
+    }
 
 
 def is_valid_package(value: str) -> bool:
@@ -1415,6 +1512,11 @@ class RenamerApp:
             value=bool(self.user_settings["check_updates"])
         )
         self.replace_source_var = BooleanVar(value=False)
+        self.legacy_loader_patch_var = BooleanVar(value=False)
+        self.legacy_loader_patch_entries: list[str] = []
+        self.legacy_loader_hint_var = StringVar(
+            value="Choose a game to check older-firmware compatibility."
+        )
         self.delete_source_after_install_var = BooleanVar(value=False)
         self.bulk_suffix_var = StringVar(value="a")
         self.bulk_replace_var = BooleanVar(value=False)
@@ -2147,6 +2249,25 @@ class RenamerApp:
         )
         self.check_updates_check.grid(
             row=2, column=1, sticky="w", pady=(4, 0)
+        )
+        self.legacy_loader_patch_check = ttk.Checkbutton(
+            choices,
+            text="Older firmware compatibility",
+            variable=self.legacy_loader_patch_var,
+            command=self._on_legacy_loader_patch_toggle,
+            state="disabled",
+        )
+        self.legacy_loader_patch_check.grid(
+            row=3, column=0, sticky="w", pady=(4, 0)
+        )
+        self.legacy_loader_hint_label = ttk.Label(
+            choices,
+            textvariable=self.legacy_loader_hint_var,
+            style="Hint.TLabel",
+            wraplength=360,
+        )
+        self.legacy_loader_hint_label.grid(
+            row=3, column=1, sticky="w", pady=(4, 0)
         )
         ttk.Separator(self.advanced_frame).grid(
             row=4, column=0, columnspan=3, sticky="ew", pady=(14, 12)
@@ -2914,6 +3035,23 @@ class RenamerApp:
 
     def _load_bundle(self, bundle: BundleInfo) -> None:
         self.bundle = bundle
+        self.legacy_loader_patch_var.set(False)
+        try:
+            self.legacy_loader_patch_entries = apk_legacy_loader_entries(bundle.apk)
+        except UserError as exc:
+            self.legacy_loader_patch_entries = []
+            self.legacy_loader_hint_var.set("Compatibility check unavailable.")
+            self._append_log(str(exc))
+        else:
+            if self.legacy_loader_patch_entries:
+                self.legacy_loader_hint_var.set(
+                    "Available for this APK • optional and off by default"
+                )
+            else:
+                self.legacy_loader_hint_var.set(
+                    "Not available • this APK has no ARM64 platform loader"
+                )
+        self._refresh_legacy_loader_patch_control()
         self.apk_analysis = None
         self.analysis_generation += 1
         self.analysis_summary_var.set("Analyzing APK metadata and signing…")
@@ -2971,6 +3109,27 @@ class RenamerApp:
         self.new_package_entry.focus_set()
         self.new_package_entry.selection_clear()
         self.new_package_entry.icursor(END)
+
+    def _refresh_legacy_loader_patch_control(self) -> None:
+        if not hasattr(self, "legacy_loader_patch_check"):
+            return
+        state = (
+            "normal"
+            if self.legacy_loader_patch_entries and not self.busy
+            else "disabled"
+        )
+        self.legacy_loader_patch_check.configure(state=state)
+
+    def _on_legacy_loader_patch_toggle(self) -> None:
+        if self.legacy_loader_patch_var.get():
+            self.legacy_loader_hint_var.set(
+                "Enabled • helps older firmware but cannot add missing OS APIs"
+            )
+        elif self.legacy_loader_patch_entries:
+            self.legacy_loader_hint_var.set(
+                "Available for this APK • optional and off by default"
+            )
+        self._invalidate_preflight()
 
     def _start_apk_analysis(self, bundle: BundleInfo) -> None:
         generation = self.analysis_generation
@@ -4833,6 +4992,14 @@ class RenamerApp:
                 f"{detail}. Open “More options” and click "
                 "“Repair / verify Android tools” first."
             )
+        apply_legacy_loader = self.legacy_loader_patch_var.get()
+        if apply_legacy_loader:
+            if not apk_legacy_loader_entries(self.bundle.apk):
+                raise UserError(
+                    "Older firmware compatibility is unavailable because this APK "
+                    "has no ARM64 platform loader."
+                )
+            verify_legacy_loader_asset()
         return (
             old,
             new,
@@ -4841,6 +5008,7 @@ class RenamerApp:
             self.copy_obb_var.get(),
             self.sign_var.get(),
             replace_source,
+            apply_legacy_loader,
         )
 
     def _perform_preflight(self):
@@ -4873,6 +5041,8 @@ class RenamerApp:
             and not KEY_BACKUP_MARKER.is_file()
         ):
             note += " • signing-key backup recommended"
+        if values[7]:
+            note += " • older firmware patch enabled"
         self.preflight_var.set(note)
         self.preflight_badge.set("✓  Ready to build", "success")
         return values
@@ -4924,6 +5094,7 @@ class RenamerApp:
         copy_obbs: bool,
         should_sign: bool,
         replace_source: bool,
+        apply_legacy_loader: bool = False,
         *,
         bundle: BundleInfo | None = None,
         emit_events: bool = True,
@@ -5026,9 +5197,14 @@ class RenamerApp:
                 change_report = replace_package_references_with_report(
                     decoded, old_package, new_package, log=log
                 )
+                compatibility_patches = []
+                if apply_legacy_loader:
+                    compatibility_patches.append(
+                        apply_legacy_loader_patch(decoded, log=log)
+                    )
                 if self.cancel_event.is_set():
                     raise OperationCancelled()
-                progress(32, "Package references updated.")
+                progress(32, "APK updates applied.")
                 log("Game name, launcher label, assets, and in-game text were untouched.")
 
                 log("Rebuilding renamed APK…")
@@ -5216,6 +5392,7 @@ class RenamerApp:
                         "output": output_signature,
                     },
                     "package_changes": change_report,
+                    "compatibility_patches": compatibility_patches,
                     "obb_changes": obb_changes,
                     "preserved_game_content": True,
                 }
@@ -5258,6 +5435,8 @@ class RenamerApp:
                             f"Technical files changed: {len(change_report['changed_files'])}",
                             f"Non-technical files preserved: {change_report['preserved_count']}",
                             f"Native/compiled warnings: {len(change_report['native_or_compiled_warnings'])}",
+                            "Older firmware compatibility: "
+                            + ("applied" if compatibility_patches else "not applied"),
                             f"OBB files renamed: {len(obb_changes)}",
                             "",
                             "See RENAME-REPORT.json for file-by-file changes, APK "
@@ -5282,6 +5461,8 @@ class RenamerApp:
                             f"OBB files: {len(obb_outputs)}",
                             f"Source signer: {source_signer}",
                             "Change report: RENAME-REPORT.txt / RENAME-REPORT.json",
+                            "Older firmware compatibility: "
+                            + ("applied" if compatibility_patches else "not applied"),
                             "Game name and in-game text: unchanged",
                             "Signing: persistent local key"
                             if should_sign
@@ -5442,6 +5623,7 @@ class RenamerApp:
             self.ask_key_backup_check.configure(state="disabled")
             self.copy_obb_check.configure(state="disabled")
             self.sign_check.configure(state="disabled")
+            self.legacy_loader_patch_check.configure(state="disabled")
             self.bulk_button.configure(state="disabled")
             self.cancel_button.configure(
                 text="Cancel safely",
@@ -5461,6 +5643,7 @@ class RenamerApp:
             self.ask_key_backup_check.configure(state="normal")
             self.copy_obb_check.configure(state="normal")
             self.sign_check.configure(state="normal")
+            self._refresh_legacy_loader_patch_control()
             self.delete_source_check.configure(
                 state="disabled" if self.replace_source_var.get() else "normal"
             )
@@ -5501,6 +5684,12 @@ class RenamerApp:
         if self.bundle is None or self.bundle.root != folder:
             return
         self.bundle = None
+        self.legacy_loader_patch_var.set(False)
+        self.legacy_loader_patch_entries = []
+        self.legacy_loader_hint_var.set(
+            "Choose a game to check older-firmware compatibility."
+        )
+        self._refresh_legacy_loader_patch_control()
         self.source_folder_var.set("")
         self.apk_var.set("")
         self.old_package_var.set("")

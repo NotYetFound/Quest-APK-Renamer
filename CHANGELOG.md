@@ -4,6 +4,12 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+### Added
+
+- Opt-in older-firmware compatibility for APKs containing the ARM64
+  `libovrplatformloader.so`, with automatic availability detection, pinned
+  upstream provenance, checksum verification, and build-report auditing.
+
 ## [1.9.0] - 2026-07-29
 
 ### Added
