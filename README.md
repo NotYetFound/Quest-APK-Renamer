@@ -41,6 +41,7 @@ Pick a Quest game folder and Quest APK Renamer will:
 - check the bundle, Android tools, and available storage;
 - rebuild, sign, and verify the renamed APK;
 - rename the OBB files and update `release.manifest`;
+- replaces libovrplatformloader.so to allow running apk on older firmwares
 - create readable text and JSON reports; and
 - install and verify the finished bundle over USB.
 
