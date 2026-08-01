@@ -108,11 +108,14 @@ jobs:
         if: matrix.packages == 'apt'
         run: |
           apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install --yes xvfb
+          DEBIAN_FRONTEND=noninteractive apt-get install --yes \
+            fontconfig fonts-dejavu-core xvfb
 
       - name: Install virtual display on Fedora
         if: matrix.packages == 'dnf'
-        run: dnf install --assumeyes xorg-x11-server-Xvfb
+        run: >-
+          dnf install --assumeyes
+          dejavu-sans-fonts fontconfig xorg-x11-server-Xvfb
 
       - name: Download packaged Linux app
         uses: actions/download-artifact@v4

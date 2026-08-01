@@ -360,13 +360,13 @@ Signer #1 certificate SHA-1 digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
             )
 
         self.assertEqual(result, list(selected))
-        picker.assert_called_once_with(
-            title="Choose APKs",
-            initialdir=str(self.tmp_path),
-            filetypes=[
-                ("Android packages", "*.apk"),
-                ("All files", "*"),
-            ],
+        picker.assert_called_once()
+        arguments = picker.call_args.kwargs
+        self.assertEqual(arguments["title"], "Choose APKs")
+        self.assertSamePath(arguments["initialdir"], self.tmp_path)
+        self.assertEqual(
+            arguments["filetypes"],
+            [("Android packages", "*.apk"), ("All files", "*")],
         )
 
     def test_kdialog_multi_apk_picker_reads_separate_output_lines(self):
@@ -411,11 +411,11 @@ Signer #1 certificate SHA-1 digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         ):
             app.native_choose_directory("Choose folder", missing_downloads)
 
-        picker.assert_called_once_with(
-            title="Choose folder",
-            initialdir=str(self.tmp_path),
-            mustexist=True,
-        )
+        picker.assert_called_once()
+        arguments = picker.call_args.kwargs
+        self.assertEqual(arguments["title"], "Choose folder")
+        self.assertSamePath(arguments["initialdir"], self.tmp_path)
+        self.assertTrue(arguments["mustexist"])
 
     def test_failed_linux_dialog_falls_back_to_another_desktop_picker(self):
         selected = str(self.tmp_path / "Game")
@@ -1039,7 +1039,7 @@ Signer #1 certificate SHA-1 digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         ):
             entry = app.desktop_entry_text()
 
-        self.assertIn(f'Exec="{executable}" %f', entry)
+        self.assertIn(f'Exec="{executable.resolve()}" %f', entry)
         self.assertNotIn("launch.sh", entry)
 
     def test_linux_open_path_falls_back_to_gio(self):
