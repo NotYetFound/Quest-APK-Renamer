@@ -20,7 +20,11 @@ from quest_renamer.infrastructure.app_paths import AppPaths
 from quest_renamer.infrastructure.build_recovery import write_build_recovery
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
 from quest_renamer.infrastructure.signing_backup import SigningIdentityManager
-from quest_renamer.main import initial_folder, package_resource_root
+from quest_renamer.main import (
+    configure_packaged_rendering,
+    initial_folder,
+    package_resource_root,
+)
 from quest_renamer.presentation.app_controller import AppController
 from quest_renamer.services.preflight import AutomaticPreflight
 
@@ -135,6 +139,53 @@ class ControllerTests(unittest.TestCase):
             package_resource_root(frozen_root=frozen),
             frozen / "quest_renamer",
         )
+
+    def test_packaged_linux_uses_software_rendering(self) -> None:
+        environment: dict[str, str] = {}
+
+        configure_packaged_rendering(
+            platform_name="linux",
+            frozen=True,
+            environment=environment,
+        )
+
+        self.assertEqual(environment["QT_QUICK_BACKEND"], "software")
+
+    def test_packaged_rendering_preserves_an_explicit_override(self) -> None:
+        environment = {"QT_QUICK_BACKEND": "rhi"}
+
+        configure_packaged_rendering(
+            platform_name="linux",
+            frozen=True,
+            environment=environment,
+        )
+
+        self.assertEqual(environment["QT_QUICK_BACKEND"], "rhi")
+
+    def test_source_windows_and_macos_runs_keep_the_native_renderer(self) -> None:
+        source_environment: dict[str, str] = {}
+        windows_environment: dict[str, str] = {}
+        macos_environment: dict[str, str] = {}
+
+        configure_packaged_rendering(
+            platform_name="linux",
+            frozen=False,
+            environment=source_environment,
+        )
+        configure_packaged_rendering(
+            platform_name="win32",
+            frozen=True,
+            environment=windows_environment,
+        )
+        configure_packaged_rendering(
+            platform_name="darwin",
+            frozen=True,
+            environment=macos_environment,
+        )
+
+        self.assertNotIn("QT_QUICK_BACKEND", source_environment)
+        self.assertNotIn("QT_QUICK_BACKEND", windows_environment)
+        self.assertNotIn("QT_QUICK_BACKEND", macos_environment)
 
     def test_startup_recovers_an_interrupted_staging_folder(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

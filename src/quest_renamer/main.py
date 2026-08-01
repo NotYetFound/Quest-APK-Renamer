@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import MutableMapping
 from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication, QTimer, QUrl
@@ -70,6 +71,25 @@ def package_resource_root(
     return (module_file or Path(__file__)).resolve().parent
 
 
+def configure_packaged_rendering(
+    *,
+    platform_name: str,
+    frozen: bool,
+    environment: MutableMapping[str, str] | None = None,
+) -> None:
+    """Use Qt's dependable software scene graph in packaged Linux apps.
+
+    Some Wayland and driver combinations cannot create the OpenGL context selected
+    by Qt Quick. That failure happens before a window can be shown. The dashboard
+    is lightweight enough for Qt's software scene graph, and an explicit
+    environment override still wins.
+    """
+    if not frozen or not platform_name.startswith("linux"):
+        return
+    target = os.environ if environment is None else environment
+    target.setdefault("QT_QUICK_BACKEND", "software")
+
+
 def support_tool_summary(
     package_root: Path,
     toolchain: Toolchain,
@@ -103,8 +123,12 @@ def main() -> int:
 
     smoke_test = "--smoke-test" in sys.argv[1:]
     launch_folder = initial_folder(sys.argv[1:])
-    app = QApplication(sys.argv)
     frozen = getattr(sys, "_MEIPASS", None)
+    configure_packaged_rendering(
+        platform_name=sys.platform,
+        frozen=isinstance(frozen, str),
+    )
+    app = QApplication(sys.argv)
     package_root = package_resource_root(
         frozen_root=Path(frozen) if isinstance(frozen, str) else None
     )
