@@ -90,12 +90,3 @@ body:
       label: Sanitized details log
       description: Remove private paths, game names, serials, and signing data.
       render: text
-  - type: checkboxes
-    id: authorization
-    attributes:
-      label: Authorization and privacy
-      options:
-        - label: I own or am authorized to modify the software involved.
-          required: true
-        - label: I removed copyrighted game files, secrets, and identifying information.
-          required: true
