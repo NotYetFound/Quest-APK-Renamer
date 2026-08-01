@@ -44,9 +44,10 @@ every OBB have been verified on the headset.
 - Rewrites the Android package ID and matching technical references.
 - Rebuilds, signs, and verifies the finished APK with a persistent local identity.
 - Renames matching OBB directories/files and regenerates `release.manifest`.
+- Optionally applies the pinned older-firmware compatibility patch when the APK already contains
+  the supported ARM64 loader.
 - Installs the APK and every OBB as one guided job, with Quest storage checks first.
 - Verifies the installed package and remote OBB sizes.
-- Keeps the game name, in-game text, artwork, and unrelated assets unchanged.
 - Produces readable text and JSON reports for every successful build.
 
 ## Main features
@@ -118,6 +119,108 @@ The standalone Logs window shows the current session and keeps a rotating 5 MB l
 timestamps, build stages, shell-free tool commands, and complete Apktool, signer, and ADB output.
 Secrets are redacted. **Copy support info** collects app, OS, device, tool, and recent-log details
 into one readable block for an issue report.
+
+## Complete feature reference
+
+The sections above describe the main workflow. This reference lists the remaining user-facing
+capabilities so features do not disappear into release notes or menus.
+
+### Input and navigation
+
+- Select a game folder, paste its path, choose one exact APK, or drag and drop either one.
+- Install the app's latest completed build or select any existing finished APK/OBB folder.
+- Open or change the automatic output location directly from the dashboard.
+- Dedicated Dashboard, Bulk Queue, APK Inspector, Settings, and standalone Logs views.
+- Responsive scrolling, subtle state transitions, visible keyboard focus, and safe default focus
+  in destructive confirmations.
+- `Ctrl+1`–`Ctrl+4` switch pages, `Ctrl+O` opens the game picker, and `Ctrl+L` opens Logs.
+
+### APK, OBB, and manifest processing
+
+- Automatic package, version, SDK, ABI, permission, signer, and bundle-size analysis.
+- Safe package-ID suggestion plus `.mr`, `.dev`, `.test`, and `.qa` presets.
+- Full APK decode, technical package-reference rewrite, rebuild, persistent signing, signature
+  verification, and optional OBB-copy/signing switches in Settings.
+- Matching OBB directory/filename changes and `release.manifest` regeneration.
+- Atomic output publishing into a sibling ` - Renamed` folder or a chosen destination.
+- `RENAMED-BUNDLE.txt`, human-readable `RENAME-REPORT.txt`, and structured
+  `RENAME-REPORT.json` output with source/output signing provenance.
+- Optional, checksum-pinned Event Horizon older-firmware loader replacement, only when the
+  compatible ARM64 file already exists in the source APK.
+- Patch-only rebuild/sign mode when the package ID is unchanged; compatibility availability is
+  detected automatically and the action changes to **Apply older-firmware patch**.
+
+### Automatic checks, progress, and recovery
+
+- Optional automatic preflight checks for input readability, package rules, Android tools, output
+  safety, local free space, existing Quest packages, and Quest free space.
+- Finished-size estimates before building and aggregate local/Quest-space warnings for bulk jobs.
+- Weighted build progress, byte-based OBB transfer progress, real percentages, and the current
+  operation stage.
+- Safe cancellation between build stages and OBB files, followed by a choice to keep or remove
+  app-created partial output.
+- Crash-persistent staging recovery with guarded **Open**, **Keep**, and **Remove** choices on the
+  next launch.
+
+### Quest installation
+
+- Non-blocking headset model, authorization state, ADB state, and available-storage reporting.
+- Clear states for disconnected, unauthorized, offline, multiple devices, missing ADB, and Linux
+  USB/udev permission problems.
+- Existing-package warning before an update attempt, including the signing-key conflict risk.
+- Sequential APK and OBB installation, installed-package verification, and remote OBB-size
+  verification.
+- Retry only failed OBB transfers without reinstalling the APK.
+- Install progress, safe cancellation, contextual failure reports, and direct access to logs.
+
+### Output and cleanup controls
+
+- Rollback-protected **Replace source after build** mode: build and verify first, swap atomically,
+  then move the unedited source to the operating-system Trash.
+- **Delete installed folder after success** mode, which runs only after the APK and every OBB are
+  verified on Quest.
+- The two controls can be enabled independently or together in both single and bulk workflows.
+- Report-verified cleanup for old app-created outputs, with the exact target shown before
+  Trash/Recycle Bin removal.
+- Original and failed-install folders are preserved whenever verification or safe cleanup fails.
+
+### Signing identity and lineage
+
+- Persistent local signing identity reused for compatible updates to renamed apps.
+- Optional signing-key backup reminder plus manual integrity-checked backup and atomic restore.
+- Existing legacy signing-key migration with validation and preservation of the original files.
+- Known-signer recognition based only on certificate `CN` and `O` values.
+- Embedded `Previously signed by …` provenance, cached per-lineage signing identities, and backups
+  that include every generated lineage key.
+- Seed recognition for Quest APK Renamer, APC, VRP, NIF, vrSrc, Meta/Oculus, Android Debug, and
+  Google identities.
+
+### Bulk workflow
+
+- Multi-select APK picker, individual folder picker, multi-folder drag and drop, and direct-child
+  parent-folder scanning.
+- Duplicate and nested selection rejection plus a preview of one suffix across every package ID.
+- Sequential build and install queues with per-game progress and safe stage boundaries.
+- Failure isolation so later games continue, followed by a complete success/failure overview.
+- Bulk source replacement and verified post-install cleanup with the same safeguards as Dashboard.
+
+### Inspector, tools, updates, and support
+
+- Full APK Inspector metadata, hashes, signature schemes/certificates, signer lineage,
+  permissions/features, technical rename preview, preserved native-reference warnings,
+  cancellation, and atomic JSON export.
+- Exact pinned Android-tool versions and integrity state in Settings.
+- Cancellable repair of missing or damaged Apktool, signer, and compatibility files, with
+  checksum verification, atomic replacement, and activation without restarting.
+- Optional background update checks, an explicit **Check now** action, stable/prerelease-aware
+  version ordering, legacy-tag handling, and a dismissible release banner.
+- Persistent 5 MB rotating log, readable operation headings, full external-tool output,
+  secret-value redaction, current-session filtering, open/save/clear actions, and one-click
+  support information.
+- Direct actions to open the app-data folder, current log, completed output, failure report, and
+  relevant release page in the operating system's normal desktop app.
+- Linux application-menu integration, Windows Start Menu installation, portable Windows/Linux
+  builds, AppImage, and native Intel/Apple Silicon macOS packages.
 
 ## Cross-platform file selection
 
