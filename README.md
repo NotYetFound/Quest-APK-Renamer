@@ -1,6 +1,6 @@
 # Quest APK Renamer
 
-> Current release-candidate version: **1.4.0**.
+> Current stable version: **1.4.0**.
 
 Quest APK Renamer is a guided desktop utility for creating, inspecting, and installing separate
 authorized Meta Quest APK/OBB test bundles. Version 1.4 replaces the legacy interface with the

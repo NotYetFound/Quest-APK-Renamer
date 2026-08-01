@@ -4,7 +4,7 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
-## [1.4.0] - Unreleased
+## [1.4.0] - 2026-08-01
 
 ### Added
 
