@@ -3,6 +3,7 @@ name: Package releases
 on:
   workflow_dispatch:
   push:
+    branches: ["codex/v1-rewrite"]
     tags: ["v*"]
 
 permissions:
