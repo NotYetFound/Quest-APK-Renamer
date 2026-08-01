@@ -137,7 +137,8 @@ macOS, and Linux packages pass their complete desktop and Quest smoke tests.
 - Download the workflow artifacts onto a separate Windows machine.
 - Download each DMG onto a matching Apple Silicon or Intel Mac.
 - Download the Linux archive onto a clean x86_64 Linux computer.
-- Verify every SHA-256 entry.
+- Verify every package against its CI-generated SHA-256 sidecar. The sidecars
+  remain workflow artifacts and are not uploaded as separate release downloads.
 - Install and launch the exact uploaded installer.
 - Install and launch both exact uploaded DMGs.
 - Install and launch the exact uploaded Linux bundle.
