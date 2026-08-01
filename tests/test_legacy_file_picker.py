@@ -1,5 +1,5 @@
 import unittest
-from pathlib import Path
+from pathlib import PurePosixPath
 
 from quest_renamer.infrastructure.legacy_file_picker import (
     linux_dialog_order,
@@ -20,7 +20,7 @@ class LegacyFilePickerTests(unittest.TestCase):
             "/usr/bin/kdialog",
             "apks",
             "Choose APKs",
-            Path("/tmp"),
+            PurePosixPath("/tmp"),
         )
         self.assertIn("--multiple", command)
         self.assertIn("--separate-output", command)
@@ -30,7 +30,7 @@ class LegacyFilePickerTests(unittest.TestCase):
             "/usr/bin/zenity",
             "save_json",
             "Export report",
-            Path("/tmp"),
+            PurePosixPath("/tmp"),
             "report.json",
         )
         self.assertIn("--save", command)

@@ -29,7 +29,7 @@ class LocalBundleTests(unittest.TestCase):
 
             bundle = LocalBundleInspector().inspect_folder(root)
 
-            self.assertEqual(bundle.apk, apk)
+            self.assertEqual(bundle.apk, apk.resolve())
             self.assertEqual(bundle.obbs, (obb.resolve(),))
             self.assertEqual(bundle.package_name, "com.studio.game")
             self.assertEqual(bundle.version_code, "42")

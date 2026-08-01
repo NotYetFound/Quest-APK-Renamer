@@ -151,7 +151,7 @@ class ControllerTests(unittest.TestCase):
 
             controller = AppController(paths=paths)
 
-            self.assertEqual(controller.partialOutputFolder, str(staging))
+            self.assertEqual(controller.partialOutputFolder, str(staging.resolve()))
             controller.keepPartialBuild()
             self.assertFalse(paths.build_recovery_file.exists())
             self.assertTrue(staging.is_dir())
@@ -186,7 +186,9 @@ class ControllerTests(unittest.TestCase):
     def test_folder_argument_accepts_an_existing_directory(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            self.assertEqual(initial_folder(["--style", "Basic", str(folder)]), folder)
+            self.assertEqual(
+                initial_folder(["--style", "Basic", str(folder)]), folder.resolve()
+            )
 
     def test_controller_is_ready_after_a_bundle_is_selected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -266,7 +268,7 @@ class ControllerTests(unittest.TestCase):
 
             self.assertEqual(
                 controller.outputFolder,
-                str(destination / "source — Development"),
+                str(destination.resolve() / "source — Development"),
             )
 
     def test_analysis_and_build_complete_without_blocking_the_ui_thread(self) -> None:
@@ -380,7 +382,7 @@ class ControllerTests(unittest.TestCase):
             self.assertTrue(saved.replace_source_after_build)
             self.assertTrue(saved.delete_source_after_install)
             self.assertTrue(saved.copy_obbs)
-            self.assertEqual(controller.outputFolder, str(source))
+            self.assertEqual(controller.outputFolder, str(source.resolve()))
 
     def test_failed_obb_transfer_can_retry_without_starting_a_new_install(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -510,7 +512,7 @@ class ControllerTests(unittest.TestCase):
             controller.signingRestoreConfirmationRequested.connect(confirmations.append)
             controller.restoreSigningKey(QUrl.fromLocalFile(str(backup)))
             self._wait_until(lambda: bool(confirmations))
-            self.assertEqual(confirmations, [str(backup)])
+            self.assertEqual(confirmations, [str(backup.resolve())])
             controller.confirmSigningKeyRestore()
             self._wait_until(lambda: "Signing identity restored" in controller.notice)
 

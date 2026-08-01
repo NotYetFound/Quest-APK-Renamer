@@ -108,7 +108,7 @@ class BuildEngineTests(unittest.TestCase):
             result = engine.build(request)
 
             self.assertEqual(apk.read_bytes(), original_apk)
-            self.assertEqual(result.output_root, output)
+            self.assertEqual(result.output_root, output.resolve())
             self.assertEqual(result.apk.read_bytes(), b"signed apk")
             self.assertTrue(result.manifest.is_file())
             self.assertTrue(result.report.is_file())
@@ -151,7 +151,7 @@ class BuildEngineTests(unittest.TestCase):
 
             result = engine.build(request)
 
-            self.assertEqual(result.output_root, source)
+            self.assertEqual(result.output_root, source.resolve())
             self.assertEqual(result.apk.read_bytes(), b"signed apk")
             self.assertEqual(trashed, [b"original apk"])
             self.assertIsNone(result.recovery_root)
@@ -170,8 +170,8 @@ class BuildEngineTests(unittest.TestCase):
             )
             self.assertEqual(machine_report["report_version"], 2)
             self.assertTrue(machine_report["apk"]["signature_verified"])
-            self.assertEqual(result.report, source / "RENAME-REPORT.json")
-            self.assertEqual(result.text_report, source / "RENAME-REPORT.txt")
+            self.assertEqual(result.report, source.resolve() / "RENAME-REPORT.json")
+            self.assertEqual(result.text_report, source.resolve() / "RENAME-REPORT.txt")
 
     def test_recognized_source_signer_is_embedded_in_the_new_signing_identity(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

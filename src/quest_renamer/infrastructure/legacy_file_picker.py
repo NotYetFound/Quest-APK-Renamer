@@ -9,7 +9,7 @@ import sys
 import urllib.parse
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Literal
 
 PickerKind = Literal["folder", "apk", "apks", "save_json", "save_log"]
@@ -41,7 +41,7 @@ def linux_picker_command(
     helper: str,
     kind: PickerKind,
     title: str,
-    start: Path,
+    start: PurePath,
     suggested_name: str = "",
 ) -> list[str]:
     if Path(helper).name == "kdialog":

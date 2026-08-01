@@ -30,8 +30,8 @@ class BuildRecoveryTests(unittest.TestCase):
             recovered = read_build_recovery(record)
             self.assertIsNotNone(recovered)
             assert recovered is not None
-            self.assertEqual(recovered.staging, staging)
-            self.assertEqual(recovered.output, output)
+            self.assertEqual(recovered.staging, staging.resolve())
+            self.assertEqual(recovered.output, output.resolve())
 
     def test_stale_record_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

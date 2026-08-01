@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from PySide6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication, QUrl
 from PySide6.QtWidgets import QFileDialog
 
 from quest_renamer.infrastructure.legacy_file_picker import LegacyPickerResult
@@ -99,7 +99,10 @@ class FileDialogControllerTests(unittest.TestCase):
 
             controller.chooseFolder("game", "Choose", str(selected))
 
-            self.assertEqual(received, [str(selected)])
+            self.assertEqual(
+                received,
+                [QUrl.fromLocalFile(str(selected)).toLocalFile()],
+            )
             self.assertFalse(native.options[QFileDialog.Option.DontUseNativeDialog])
             self.assertEqual(len(sequence.created), 1)
 
@@ -120,7 +123,10 @@ class FileDialogControllerTests(unittest.TestCase):
 
             controller.chooseFolder("game", "Choose", str(selected))
 
-            self.assertEqual(received, [str(selected)])
+            self.assertEqual(
+                received,
+                [QUrl.fromLocalFile(str(selected)).toLocalFile()],
+            )
             self.assertFalse(native.options[QFileDialog.Option.DontUseNativeDialog])
             self.assertTrue(qt.options[QFileDialog.Option.DontUseNativeDialog])
 
@@ -166,7 +172,10 @@ class FileDialogControllerTests(unittest.TestCase):
             controller.chooseApk("inspect", "Choose APK", temporary)
 
             self.assertEqual(legacy_calls, ["apk"])
-            self.assertEqual(received, [str(selected)])
+            self.assertEqual(
+                received,
+                [QUrl.fromLocalFile(str(selected)).toLocalFile()],
+            )
 
 
 if __name__ == "__main__":
