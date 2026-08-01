@@ -1,7 +1,9 @@
 import unittest
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
+from subprocess import CompletedProcess
 
 from quest_renamer.infrastructure.legacy_file_picker import (
+    linux_desktop_pick,
     linux_dialog_order,
     linux_picker_command,
 )
@@ -36,6 +38,34 @@ class LegacyFilePickerTests(unittest.TestCase):
         self.assertIn("--save", command)
         self.assertIn("--confirm-overwrite", command)
         self.assertIn("--filename=/tmp/report.json", command)
+
+    def test_desktop_picker_uses_clean_host_environment(self) -> None:
+        received_environment: dict[str, str] = {}
+
+        def runner(arguments: list[str], **kwargs: object) -> CompletedProcess[str]:
+            received_environment.update(kwargs["env"])  # type: ignore[arg-type]
+            return CompletedProcess(arguments, 0, stdout="/tmp/game\n", stderr="")
+
+        result = linux_desktop_pick(
+            "folder",
+            "Choose",
+            Path("/tmp"),
+            "",
+            environment={
+                "XDG_CURRENT_DESKTOP": "KDE",
+                "APPIMAGE": "/tmp/app.AppImage",
+                "LD_LIBRARY_PATH": "/tmp/bundled",
+                "QT_PLUGIN_PATH": "/tmp/plugins",
+            },
+            which=lambda name: f"/usr/bin/{name}" if name == "kdialog" else None,
+            runner=runner,
+        )
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.paths, (Path("/tmp/game"),))
+        self.assertNotIn("LD_LIBRARY_PATH", received_environment)
+        self.assertNotIn("QT_PLUGIN_PATH", received_environment)
 
 
 if __name__ == "__main__":

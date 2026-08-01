@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -11,9 +12,15 @@ from typing import Literal
 from PySide6.QtCore import QObject, QUrl, Signal, Slot
 from PySide6.QtWidgets import QFileDialog
 
-from quest_renamer.infrastructure.legacy_file_picker import PickerKind, legacy_pick
+from quest_renamer.infrastructure.legacy_file_picker import (
+    LegacyPickerResult,
+    PickerKind,
+    legacy_fallback_pick,
+    linux_desktop_pick,
+)
 
 DialogFactory = Callable[[], QFileDialog]
+Picker = Callable[[PickerKind, str, Path, str], LegacyPickerResult | None]
 AttemptState = Literal["selected", "cancelled", "failed"]
 
 
@@ -50,14 +57,18 @@ class FileDialogController(QObject):
         self,
         *,
         dialog_factory: DialogFactory | None = None,
-        legacy_picker: Callable[[PickerKind, str, Path, str], object] | None = None,
+        desktop_picker: Picker | None = None,
+        legacy_picker: Picker | None = None,
         clock: Callable[[], float] | None = None,
+        platform_name: str = sys.platform,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._dialog_factory = dialog_factory or QFileDialog
-        self._legacy_picker = legacy_picker or legacy_pick
+        self._desktop_picker = desktop_picker or linux_desktop_pick
+        self._legacy_picker = legacy_picker or legacy_fallback_pick
         self._clock = clock or time.monotonic
+        self._platform_name = platform_name
 
     def _dialog(
         self,
@@ -138,6 +149,14 @@ class FileDialogController(QObject):
     ) -> tuple[Path, ...]:
         start = existing_dialog_directory(initial)
         errors: list[str] = []
+        if self._platform_name.startswith("linux"):
+            desktop_result = self._desktop_picker(kind, title, start, suggested_name)
+            if desktop_result is not None:
+                if desktop_result.paths:
+                    return desktop_result.paths
+                if desktop_result.cancelled:
+                    return ()
+                errors.extend(desktop_result.errors)
         for native in (True, False):
             attempt = self._try_qt(
                 kind,

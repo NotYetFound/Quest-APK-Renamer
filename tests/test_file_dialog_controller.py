@@ -91,6 +91,7 @@ class FileDialogControllerTests(unittest.TestCase):
             controller = FileDialogController(
                 dialog_factory=sequence,
                 clock=FakeClock(0.0, 1.0),
+                platform_name="win32",
             )
             received: list[str] = []
             controller.folderSelected.connect(
@@ -115,6 +116,7 @@ class FileDialogControllerTests(unittest.TestCase):
             controller = FileDialogController(
                 dialog_factory=sequence,
                 clock=FakeClock(0.0, 0.01, 1.0, 2.0),
+                platform_name="win32",
             )
             received: list[str] = []
             controller.folderSelected.connect(
@@ -139,6 +141,7 @@ class FileDialogControllerTests(unittest.TestCase):
                 dialog_factory=sequence,
                 clock=FakeClock(0.0, 1.0),
                 legacy_picker=lambda *_args: legacy_calls.append(True),
+                platform_name="win32",
             )
 
             controller.chooseFolder("game", "Choose", temporary)
@@ -163,6 +166,7 @@ class FileDialogControllerTests(unittest.TestCase):
                 dialog_factory=sequence,
                 clock=FakeClock(0.0, 0.01, 1.0, 1.01),
                 legacy_picker=legacy,
+                platform_name="win32",
             )
             received: list[str] = []
             controller.fileSelected.connect(
@@ -176,6 +180,57 @@ class FileDialogControllerTests(unittest.TestCase):
                 received,
                 [QUrl.fromLocalFile(str(selected)).toLocalFile()],
             )
+
+    def test_linux_desktop_picker_runs_before_any_qt_dialog(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            selected = Path(temporary)
+            sequence = DialogSequence()
+            desktop_calls: list[str] = []
+
+            def desktop(
+                kind: str, _title: str, _start: Path, _suggested: str
+            ) -> LegacyPickerResult:
+                desktop_calls.append(kind)
+                return LegacyPickerResult(paths=(selected,))
+
+            controller = FileDialogController(
+                dialog_factory=sequence,
+                desktop_picker=desktop,
+                platform_name="linux",
+            )
+            received: list[str] = []
+            controller.folderSelected.connect(
+                lambda _purpose, url: received.append(url.toLocalFile())
+            )
+
+            controller.chooseFolder("game", "Choose", str(selected))
+
+            self.assertEqual(desktop_calls, ["folder"])
+            self.assertEqual(sequence.created, [])
+            self.assertEqual(received, [str(selected)])
+
+    def test_linux_desktop_failure_falls_back_to_qt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            selected = Path(temporary)
+            qt = FakeDialog(QFileDialog.DialogCode.Accepted, (selected,))
+            sequence = DialogSequence(qt)
+            controller = FileDialogController(
+                dialog_factory=sequence,
+                desktop_picker=lambda *_args: LegacyPickerResult(
+                    errors=("kdialog unavailable",)
+                ),
+                clock=FakeClock(0.0, 1.0),
+                platform_name="linux",
+            )
+            received: list[str] = []
+            controller.folderSelected.connect(
+                lambda _purpose, url: received.append(url.toLocalFile())
+            )
+
+            controller.chooseFolder("game", "Choose", str(selected))
+
+            self.assertEqual(len(sequence.created), 1)
+            self.assertEqual(received, [str(selected)])
 
 
 if __name__ == "__main__":

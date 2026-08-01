@@ -7,12 +7,15 @@ import shutil
 import subprocess
 import sys
 import urllib.parse
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePath
 from typing import Literal
 
+from quest_renamer.infrastructure.desktop_open import external_process_environment
+
 PickerKind = Literal["folder", "apk", "apks", "save_json", "save_log"]
+PickerRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,25 +130,31 @@ def _command_failed(return_code: int, stderr: str) -> bool:
     return return_code not in {1, 5} or any(marker in detail for marker in markers)
 
 
-def _linux_pick(
+def linux_desktop_pick(
     kind: PickerKind,
     title: str,
     start: Path,
     suggested_name: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+    which: Callable[[str], str | None] = shutil.which,
+    runner: PickerRunner = subprocess.run,
 ) -> LegacyPickerResult | None:
+    """Use the current Linux desktop's own picker without a Qt/Tk fallback."""
     errors: list[str] = []
-    for helper_name in linux_dialog_order():
-        helper = shutil.which(helper_name)
+    for helper_name in linux_dialog_order(environment):
+        helper = which(helper_name)
         if helper is None:
             continue
         try:
-            completed = subprocess.run(
+            completed = runner(
                 linux_picker_command(helper, kind, title, start, suggested_name),
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
                 check=False,
+                env=external_process_environment(environment),
             )
         except OSError as exc:
             errors.append(f"{helper_name}: {exc}")
@@ -160,6 +169,16 @@ def _linux_pick(
         detail = completed.stderr.strip() or completed.stdout.strip()
         errors.append(f"{helper_name}: {detail or f'exited with {completed.returncode}'}")
     return LegacyPickerResult(errors=tuple(errors)) if errors else None
+
+
+def legacy_fallback_pick(
+    kind: PickerKind,
+    title: str,
+    start: Path,
+    suggested_name: str = "",
+) -> LegacyPickerResult:
+    """Use the toolkit-independent final fallback after desktop and Qt pickers."""
+    return _tk_pick(kind, title, start, suggested_name)
 
 
 def _tk_pick(
@@ -228,7 +247,7 @@ def legacy_pick(
 ) -> LegacyPickerResult:
     helper_result: LegacyPickerResult | None = None
     if sys.platform.startswith("linux"):
-        helper_result = _linux_pick(kind, title, start, suggested_name)
+        helper_result = linux_desktop_pick(kind, title, start, suggested_name)
         if helper_result is not None and (helper_result.paths or helper_result.cancelled):
             return helper_result
     tk_result = _tk_pick(kind, title, start, suggested_name)
