@@ -1,0 +1,20 @@
+{
+  "apktool": {
+    "file": "apktool.jar",
+    "version": "3.0.3",
+    "url": "https://github.com/iBotPeaches/Apktool/releases/download/v3.0.3/apktool_3.0.3.jar",
+    "sha256": "dbf930b076c6b9be08d57c449cacefc3bdd6b71ebd59b3066fc0e1f5b14f9423"
+  },
+  "uber_apk_signer": {
+    "file": "uber-apk-signer.jar",
+    "version": "1.3.0",
+    "url": "https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar",
+    "sha256": "e1299fd6fcf4da527dd53735b56127e8ea922a321128123b9c32d619bba1d835"
+  },
+  "older_firmware_patch": {
+    "file": "libovrplatformloader.so",
+    "version": "eventhorizon-9ffe7009",
+    "url": "https://raw.githubusercontent.com/veygax/eventhorizon/9ffe7009ae10601bf72ed57455d31ef051495f84/app/src/main/assets/ovrplatform/libovrplatformloader.so",
+    "sha256": "1f6d43e6b7b82960efdaf6596953272c32022316375ddca1eddc56e15b026ca2"
+  }
+}

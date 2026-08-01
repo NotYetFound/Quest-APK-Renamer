@@ -1,0 +1,30 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install source and checks
+        run: python -m pip install -e '.[dev]'
+      - name: Validate Python and QML shell
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ruff check src tests scripts
+          mypy src
+          pytest -q
+          quest-renamer --smoke-test

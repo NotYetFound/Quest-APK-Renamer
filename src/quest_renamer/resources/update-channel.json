@@ -1,0 +1,6 @@
+{
+  "releases_api": "https://api.github.com/repos/RockoTheeHut/Quest-APK-Renamer/releases?per_page=30",
+  "tags_api": "https://api.github.com/repos/RockoTheeHut/Quest-APK-Renamer/tags?per_page=100",
+  "releases_page": "https://github.com/RockoTheeHut/Quest-APK-Renamer/releases",
+  "tag_prefix": "v"
+}

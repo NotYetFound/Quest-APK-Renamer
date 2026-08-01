@@ -1,60 +1,39 @@
-# Python
+.venv/
 __pycache__/
 *.py[cod]
-*$py.class
-.Python
-.venv/
-venv/
-env/
+*.egg-info/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
 .coverage
-coverage.xml
 htmlcov/
-
-# Build and packaging output
 build/
 dist/
-windows/.venv/
-windows/runtime/
-macos/.venv/
-macos/runtime/
-linux/.venv/
-linux/runtime/
-*.spec.bak
+artifacts/
+packaging/*/.venv/
+packaging/*/generated/
+packaging/*/runtime/
+# Untracked build caches left by the pre-1.4 layout
+/linux/.venv/
+/linux/runtime/
 *.log
+.DS_Store
+Thumbs.db
 
-# Local game bundles and signing secrets
+# Game bundles, signing identities, and private local data
 *.apk
 *.apks
 *.aab
 *.obb
 *.jks
 *.keystore
+*.p12
 signing-key.json
 signing-key-backup.json
 release.manifest
 RENAMED-BUNDLE.txt
 
-# Editors and operating systems
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-Desktop.ini
-
-# Temporary files
-.cache/
-tmp/
-temp/
-*.tmp
-*.bak
-
-# Private planning and AI-assistant workspace files
+# Private planning and assistant workspace files
 ROADMAP.md
 PLANS.md
 AGENTS.md

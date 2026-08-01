@@ -14,25 +14,33 @@ the stage that failed, and a sanitized copy of **Show details** output.
 
 ## Development setup
 
-Quest APK Renamer requires Python 3.10 or newer. TkinterDnD2 is vendored for the
-desktop runtime.
+Quest APK Renamer requires Python 3.11 or newer. Create a virtual environment
+and install the source plus development checks:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+On Windows, activate the environment with `.venv\Scripts\activate`.
 
 Run the test suite before and after a change:
 
 ```bash
-python3 -m unittest discover -s tests -v
+pytest -q
+ruff check src tests scripts
+mypy src
 ```
 
 Launch the app from the repository:
 
 ```bash
-./launch.sh
+quest-renamer
 ```
 
-Platform packaging instructions are in
-[windows/README.md](windows/README.md),
-[macos/README.md](macos/README.md), and
-[linux/README.md](linux/README.md).
+Cross-platform packaging, signing, and release instructions are in
+[docs/PACKAGING.md](docs/PACKAGING.md).
 
 ## Pull requests
 

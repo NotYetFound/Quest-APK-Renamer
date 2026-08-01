@@ -1,0 +1,166 @@
+name: Package releases
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install host packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes curl unzip python3-venv
+      - name: Build Linux package
+        run: |
+          chmod +x packaging/linux/*.sh
+          packaging/linux/build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-x86_64
+          path: |
+            dist/Quest-APK-Renamer-*-Linux-x86_64.tar.gz
+            dist/Quest-APK-Renamer-*-Linux-x86_64.tar.gz.sha256
+            dist/Quest-APK-Renamer-*-x86_64.AppImage
+            dist/Quest-APK-Renamer-*-x86_64.AppImage.sha256
+          if-no-files-found: error
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+      - name: Build Windows packages
+        shell: pwsh
+        run: packaging/windows/build.ps1 -BuildInstaller
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-x86_64
+          path: |
+            dist/Quest-APK-Renamer-*-Windows-portable.zip
+            dist/Quest-APK-Renamer-*-Windows-portable.zip.sha256
+            dist/installer/*.exe
+            dist/installer/*.exe.sha256
+          if-no-files-found: error
+
+  macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Import optional Developer ID certificate
+        env:
+          APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY_SECRET: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+        run: |
+          if [[ -z "$APPLE_CERTIFICATE_P12" ]]; then
+              echo "No Developer ID certificate configured; using ad-hoc signing."
+              exit 0
+          fi
+          [[ -n "$MACOS_CODESIGN_IDENTITY_SECRET" ]] || { echo "Missing signing identity." >&2; exit 1; }
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          keychain="$RUNNER_TEMP/quest-apk-renamer.keychain-db"
+          password="$(uuidgen)"
+          printf '%s' "$APPLE_CERTIFICATE_P12" | /usr/bin/base64 -D > "$certificate"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$certificate" -P "$APPLE_CERTIFICATE_PASSWORD" -A -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychain -d user -s "$keychain" login.keychain-db
+          echo "MACOS_CODESIGN_IDENTITY=$MACOS_CODESIGN_IDENTITY_SECRET" >> "$GITHUB_ENV"
+          echo "MACOS_BUILD_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      - name: Build native macOS package
+        env:
+          MACOS_TARGET_ARCH: ${{ matrix.arch }}
+        run: |
+          chmod +x packaging/macos/*.sh
+          packaging/macos/build.sh
+      - name: Notarize when Apple credentials are configured
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          dmg="$(find dist -maxdepth 1 -name 'Quest-APK-Renamer-*-macOS-${{ matrix.arch }}.dmg' -print -quit)"
+          if [[ -n "${MACOS_CODESIGN_IDENTITY:-}" && -n "$APPLE_ID" && -n "$APPLE_APP_PASSWORD" && -n "$APPLE_TEAM_ID" ]]; then
+              xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
+                  --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+              xcrun stapler staple "$dmg"
+              xcrun stapler validate "$dmg"
+              (cd dist && shasum -a 256 "$(basename "$dmg")") > "$dmg.sha256"
+          else
+              echo "Notarization credentials are not configured."
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            dist/Quest-APK-Renamer-*-macOS-${{ matrix.arch }}.dmg
+            dist/Quest-APK-Renamer-*-macOS-${{ matrix.arch }}.dmg.sha256
+          if-no-files-found: error
+      - name: Remove temporary signing keychain
+        if: always()
+        run: |
+          if [[ -n "${MACOS_BUILD_KEYCHAIN:-}" ]]; then
+              security delete-keychain "$MACOS_BUILD_KEYCHAIN" || true
+          fi
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "*"
+          path: artifacts
+          merge-multiple: true
+      - name: Validate tag and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          version="$(PYTHONPATH=src python -c 'from quest_renamer import __version__; print(__version__)')"
+          expected="v$version"
+          if [[ "$GITHUB_REF_NAME" != "$expected" && "$GITHUB_REF_NAME" != "$expected"-* ]]; then
+              echo "Tag $GITHUB_REF_NAME does not match $expected." >&2
+              exit 1
+          fi
+          args=(release create "$GITHUB_REF_NAME" --title "Quest APK Renamer $version")
+          suffix="${GITHUB_REF_NAME#$expected}"
+          [[ -z "$suffix" ]] || args+=(--prerelease)
+          gh "${args[@]}" --generate-notes artifacts/*

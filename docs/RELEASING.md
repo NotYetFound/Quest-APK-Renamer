@@ -12,7 +12,7 @@ Suggested GitHub repository description:
 Suggested topics:
 
 ```text
-meta-quest android apk obb adb tkinter python desktop-app
+meta-quest android apk obb adb qt qml python desktop-app
 ```
 
 Enable **Issues**, **Actions**, and **Private vulnerability reporting** in the
@@ -22,11 +22,10 @@ for the repository-provided `GITHUB_TOKEN`.
 ## 1. Confirm the release
 
 - Decide whether the build is alpha, beta, release candidate, or stable.
-- Update `APP_VERSION` in `quest_apk_renamer.py`.
-- Update `windows/version-info.txt` and `windows/installer.iss`.
-- Update `macos/quest-apk-renamer.spec` and `macos/build.sh`.
-- Update both platform build workflows.
-- Update the README version badge and download filename.
+- Update `__version__` in `src/quest_renamer/__init__.py`.
+- Confirm the common version is used by the PyInstaller spec and all three
+  platform packaging scripts.
+- Update the README release-candidate line.
 - Add the dated entry to `CHANGELOG.md`.
 - Confirm that the MIT copyright line still names the intended holder.
 
@@ -35,8 +34,11 @@ for the repository-provided `GITHUB_TOKEN`.
 Run:
 
 ```bash
-python3 -m py_compile quest_apk_renamer.py
-python3 -W error::ResourceWarning -m unittest discover -s tests -v
+python -m pip install -e '.[dev]'
+ruff check src tests scripts
+mypy src
+pytest -q
+QT_QPA_PLATFORM=offscreen quest-renamer --smoke-test
 ```
 
 On a real Windows x64 computer:
@@ -104,27 +106,30 @@ stapling. Never place these values in the repository or workflow files.
 
 ## 4. Tag and build
 
-For the current cross-platform validation build, create a prerelease tag:
+Start a manual package run from the candidate branch first. This produces all
+four platform artifacts without publishing a release. After those exact files
+pass the checks above, create the stable tag:
 
 ```bash
-git tag -a v1.3.2-beta.1 -m "Quest APK Renamer 1.3.2 beta 1"
-git push origin v1.3.2-beta.1
+git tag -a v1.4.0 -m "Quest APK Renamer 1.4.0"
+git push origin v1.4.0
 ```
 
 The release workflows build:
 
-- `Quest-APK-Renamer-1.3.2-Windows-portable.zip`;
-- `Quest-APK-Renamer-1.3.2-Setup.exe`;
-- `Quest-APK-Renamer-1.3.2-macOS-arm64.dmg`;
-- `Quest-APK-Renamer-1.3.2-macOS-x86_64.dmg`;
-- `Quest-APK-Renamer-1.3.2-Linux-x86_64.tar.gz`.
+- `Quest-APK-Renamer-1.4.0-Windows-portable.zip`;
+- `Quest-APK-Renamer-1.4.0-Setup.exe`;
+- `Quest-APK-Renamer-1.4.0-macOS-arm64.dmg`;
+- `Quest-APK-Renamer-1.4.0-macOS-x86_64.dmg`;
+- `Quest-APK-Renamer-1.4.0-Linux-x86_64.tar.gz`; and
+- `Quest-APK-Renamer-1.4.0-x86_64.AppImage`.
 
 GitHub displays a copyable SHA-256 digest beside every uploaded release asset.
 
 A `v*` tag creates a GitHub release automatically. A tag may match the app
-version exactly or add a prerelease suffix. For example, app version `1.3.2`
-accepts `v1.3.2` or `v1.3.2-beta.1`. Tags containing a hyphen are marked as
-prereleases. Create the stable `v1.3.2` tag only after the uploaded Windows,
+version exactly or add a prerelease suffix. For example, app version `1.4.0`
+accepts `v1.4.0` or `v1.4.0-beta.1`. Tags containing a hyphen are marked as
+prereleases. Create the stable `v1.4.0` tag only after the candidate Windows,
 macOS, and Linux packages pass their complete desktop and Quest smoke tests.
 
 ## 5. Before publishing
