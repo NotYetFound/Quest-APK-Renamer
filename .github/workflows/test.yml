@@ -18,6 +18,10 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1
       - name: Install source and checks
         run: python -m pip install -e '.[dev]'
       - name: Validate Python and QML shell

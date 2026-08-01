@@ -22,7 +22,7 @@ jobs:
       - name: Install host packages
         run: |
           sudo apt-get update
-          sudo apt-get install --yes curl unzip python3-venv
+          sudo apt-get install --yes curl libegl1 unzip python3-venv
       - name: Build Linux package
         run: |
           chmod +x packaging/linux/*.sh
