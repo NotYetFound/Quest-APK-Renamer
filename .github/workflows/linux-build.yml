@@ -118,7 +118,7 @@ jobs:
           dejavu-sans-fonts fontconfig xorg-x11-server-Xvfb
 
       - name: Download packaged Linux app
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Quest-APK-Renamer-${{ env.APP_VERSION }}-Linux-x86_64
           path: artifact
@@ -148,7 +148,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download Linux bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Quest-APK-Renamer-${{ env.APP_VERSION }}-Linux-x86_64
           path: dist
