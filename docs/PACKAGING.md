@@ -12,7 +12,9 @@ settings and signing material.
 - Android SDK Platform-Tools for ADB installation and device status.
 - Checksum-pinned Apktool, Uber APK Signer, and Event Horizon compatibility loader files.
 - MIT and third-party notices.
-- A SHA-256 sidecar for every downloadable archive or installer.
+- A SHA-256 sidecar for CI verification of every archive or installer. Public
+  GitHub releases rely on GitHub's displayed asset digest instead of publishing
+  separate checksum files.
 
 Linux produces both a conventional portable tarball with launcher install helpers and a single-file
 AppImage. The AppImage contains the same frozen application and verified Android toolchain; it does
