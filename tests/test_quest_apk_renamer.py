@@ -310,6 +310,25 @@ Signer #1 certificate SHA-1 digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         fallback.assert_called_once_with()
         fallback_root.mainloop.assert_called_once_with()
 
+    def test_platform_smoke_mode_builds_ui_without_entering_mainloop(self):
+        root = mock.Mock()
+        with (
+            mock.patch.object(app, "DND_AVAILABLE", False),
+            mock.patch.object(app, "Tk", return_value=root),
+            mock.patch.object(app, "RenamerApp") as application,
+            mock.patch.object(
+                app.sys,
+                "argv",
+                ["quest-apk-renamer", "--platform-smoke-test"],
+            ),
+        ):
+            self.assertEqual(app.main(), 0)
+
+        application.assert_called_once_with(root)
+        root.update_idletasks.assert_called_once_with()
+        root.destroy.assert_called_once_with()
+        root.mainloop.assert_not_called()
+
     def test_bulk_suffix_is_appended_to_each_package(self):
         self.assertEqual(
             app.package_with_suffix("com.example.game", "a"),
@@ -378,6 +397,87 @@ Signer #1 certificate SHA-1 digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         command = runner.call_args.args[0]
         self.assertIn("--multiple", command)
         self.assertIn("--separate-output", command)
+
+    def test_folder_picker_uses_an_existing_initial_directory(self):
+        missing_downloads = self.tmp_path / "Downloads"
+        with (
+            mock.patch.object(app.sys, "platform", "linux"),
+            mock.patch.object(app.shutil, "which", return_value=None),
+            mock.patch.object(
+                app.filedialog,
+                "askdirectory",
+                return_value="",
+            ) as picker,
+        ):
+            app.native_choose_directory("Choose folder", missing_downloads)
+
+        picker.assert_called_once_with(
+            title="Choose folder",
+            initialdir=str(self.tmp_path),
+            mustexist=True,
+        )
+
+    def test_failed_linux_dialog_falls_back_to_another_desktop_picker(self):
+        selected = str(self.tmp_path / "Game")
+        failed = mock.Mock(
+            returncode=1,
+            stdout="",
+            stderr="Gtk-WARNING: cannot open display",
+        )
+        succeeded = mock.Mock(returncode=0, stdout=selected + "\n", stderr="")
+        helpers = {
+            "zenity": "/usr/bin/zenity",
+            "kdialog": "/usr/bin/kdialog",
+        }
+        with (
+            mock.patch.object(app.sys, "platform", "linux"),
+            mock.patch.dict(
+                app.os.environ,
+                {"XDG_CURRENT_DESKTOP": "GNOME"},
+                clear=False,
+            ),
+            mock.patch.object(
+                app.shutil,
+                "which",
+                side_effect=lambda name: helpers.get(name),
+            ),
+            mock.patch.object(
+                app.subprocess,
+                "run",
+                side_effect=[failed, succeeded],
+            ) as runner,
+            mock.patch.object(app.filedialog, "askdirectory") as tk_picker,
+        ):
+            result = app.native_choose_directory("Choose folder", self.tmp_path)
+
+        self.assertEqual(result, selected)
+        self.assertEqual(Path(runner.call_args_list[0].args[0][0]).name, "zenity")
+        self.assertEqual(Path(runner.call_args_list[1].args[0][0]).name, "kdialog")
+        tk_picker.assert_not_called()
+
+    def test_linux_dialog_cancellation_does_not_open_a_second_picker(self):
+        cancelled = mock.Mock(returncode=1, stdout="", stderr="")
+        with (
+            mock.patch.object(app.sys, "platform", "linux"),
+            mock.patch.object(app.shutil, "which", return_value="/usr/bin/zenity"),
+            mock.patch.object(app.subprocess, "run", return_value=cancelled) as runner,
+            mock.patch.object(app.filedialog, "askdirectory") as tk_picker,
+        ):
+            result = app.native_choose_directory("Choose folder", self.tmp_path)
+
+        self.assertEqual(result, "")
+        runner.assert_called_once()
+        tk_picker.assert_not_called()
+
+    def test_linux_dialog_order_matches_the_desktop(self):
+        self.assertEqual(
+            app.linux_dialog_order({"XDG_CURRENT_DESKTOP": "KDE"})[0],
+            "kdialog",
+        )
+        self.assertEqual(
+            app.linux_dialog_order({"XDG_CURRENT_DESKTOP": "GNOME"})[0],
+            "zenity",
+        )
 
     def test_discover_bundle_folders_scans_direct_children(self):
         first = self.tmp_path / "First Game"
@@ -931,6 +1031,34 @@ Signer #1 certificate SHA-1 digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
         self.assertIn(f"Icon={app.SCRIPT_DIR / 'assets/quest-apk-renamer.svg'}", entry)
         self.assertIn("Keywords=Quest;APK;OBB;Android;Sideload;", entry)
 
+    def test_frozen_desktop_entry_uses_the_packaged_executable(self):
+        executable = self.tmp_path / "Quest APK Renamer"
+        with (
+            mock.patch.object(app.sys, "frozen", True, create=True),
+            mock.patch.object(app.sys, "executable", str(executable)),
+        ):
+            entry = app.desktop_entry_text()
+
+        self.assertIn(f'Exec="{executable}" %f', entry)
+        self.assertNotIn("launch.sh", entry)
+
+    def test_linux_open_path_falls_back_to_gio(self):
+        target = self.tmp_path / "Output"
+        with (
+            mock.patch.object(app.sys, "platform", "linux"),
+            mock.patch.object(
+                app.shutil,
+                "which",
+                side_effect=lambda name: "/usr/bin/gio" if name == "gio" else None,
+            ),
+            mock.patch.object(app.subprocess, "Popen") as opener,
+            mock.patch.object(app.messagebox, "showerror") as error_dialog,
+        ):
+            app.RenamerApp._open_path(target)
+
+        opener.assert_called_once_with(["/usr/bin/gio", "open", str(target)])
+        error_dialog.assert_not_called()
+
     def test_drag_and_drop_runtime_is_bundled(self):
         self.assertTrue(app.DND_AVAILABLE)
 
@@ -944,6 +1072,15 @@ Signer #1 certificate SHA-1 digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 
         self.assertEqual(connected, ["QUEST123"])
         self.assertEqual(unavailable, ["PHONE456 (unauthorized)"])
+
+    def test_parse_adb_devices_reports_linux_usb_permissions(self):
+        connected, unavailable = app.parse_adb_devices(
+            "List of devices attached\n"
+            "???????????? no permissions (user in plugdev group); see android.com\n"
+        )
+
+        self.assertEqual(connected, [])
+        self.assertEqual(unavailable, ["???????????? (no USB permission)"])
 
     def test_parse_adb_model(self):
         output = (

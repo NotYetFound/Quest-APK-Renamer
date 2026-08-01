@@ -67,8 +67,12 @@ On a Linux x86_64 computer:
 
 - extract the release archive and run `./install.sh`;
 - launch the app from the desktop app launcher;
+- confirm the generated launcher targets the packaged executable;
 - confirm Java, `keytool`, ADB, Apktool, and the signer are detected;
-- confirm drag-and-drop and the native folder picker;
+- confirm drag-and-drop and folder selection on both Wayland and X11;
+- test picker preference/fallback on GNOME-family and KDE-family desktops;
+- confirm a missing `~/Downloads` folder still opens a usable picker;
+- confirm an ADB `no permissions` device shows the Linux udev guidance;
 - connect an authorized Quest and complete one build/install/verify cycle;
 - run `./uninstall.sh`; and
 - confirm `~/.local/share/quest-apk-renamer/` and its signing key are preserved.
@@ -103,24 +107,24 @@ stapling. Never place these values in the repository or workflow files.
 For the current cross-platform validation build, create a prerelease tag:
 
 ```bash
-git tag -a v1.3.0-beta.1 -m "Quest APK Renamer 1.3.0 beta 1"
-git push origin v1.3.0-beta.1
+git tag -a v1.3.2-beta.1 -m "Quest APK Renamer 1.3.2 beta 1"
+git push origin v1.3.2-beta.1
 ```
 
 The release workflows build:
 
-- `Quest-APK-Renamer-1.3.0-Windows-portable.zip`;
-- `Quest-APK-Renamer-1.3.0-Setup.exe`;
-- `Quest-APK-Renamer-1.3.0-macOS-arm64.dmg`;
-- `Quest-APK-Renamer-1.3.0-macOS-x86_64.dmg`;
-- `Quest-APK-Renamer-1.3.0-Linux-x86_64.tar.gz`.
+- `Quest-APK-Renamer-1.3.2-Windows-portable.zip`;
+- `Quest-APK-Renamer-1.3.2-Setup.exe`;
+- `Quest-APK-Renamer-1.3.2-macOS-arm64.dmg`;
+- `Quest-APK-Renamer-1.3.2-macOS-x86_64.dmg`;
+- `Quest-APK-Renamer-1.3.2-Linux-x86_64.tar.gz`.
 
 GitHub displays a copyable SHA-256 digest beside every uploaded release asset.
 
 A `v*` tag creates a GitHub release automatically. A tag may match the app
-version exactly or add a prerelease suffix. For example, app version `1.3.0`
-accepts `v1.3.0` or `v1.3.0-beta.1`. Tags containing a hyphen are marked as
-prereleases. Create the stable `v1.3.0` tag only after the uploaded Windows,
+version exactly or add a prerelease suffix. For example, app version `1.3.2`
+accepts `v1.3.2` or `v1.3.2-beta.1`. Tags containing a hyphen are marked as
+prereleases. Create the stable `v1.3.2` tag only after the uploaded Windows,
 macOS, and Linux packages pass their complete desktop and Quest smoke tests.
 
 ## 5. Before publishing

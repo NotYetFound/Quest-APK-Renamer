@@ -25,6 +25,7 @@ import tempfile
 import threading
 import traceback
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 import zipfile
@@ -41,6 +42,7 @@ from tkinter import (
     PhotoImage,
     StringVar,
     Text,
+    TclError,
     Tk,
     Toplevel,
     filedialog,
@@ -64,7 +66,7 @@ from apk_analysis import (
 )
 
 APP_NAME = "Quest APK Renamer"
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.2"
 PACKAGE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)+$")
 OBB_RE = re.compile(r"^(main|patch)\.(\d+)\.(.+)\.obb$", re.IGNORECASE)
 
@@ -802,6 +804,8 @@ def parse_adb_devices(output: str) -> tuple[list[str], list[str]]:
             connected.append(fields[0])
         elif fields[1] in {"unauthorized", "offline"}:
             unavailable.append(f"{fields[0]} ({fields[1]})")
+        elif fields[1] == "no" and "permissions" in fields[2:]:
+            unavailable.append(f"{fields[0]} (no USB permission)")
     return connected, unavailable
 
 
@@ -837,159 +841,214 @@ def parse_df_storage(output: str) -> tuple[int, int] | None:
     return None
 
 
+def dialog_initial_directory(initial: Path | None = None) -> str:
+    """Return an existing local directory suitable for every picker backend."""
+    candidate = (initial or Path.home()).expanduser()
+    if candidate.is_file():
+        candidate = candidate.parent
+    candidate = existing_parent(candidate)
+    if not candidate.is_dir():
+        home = Path.home().expanduser()
+        candidate = home if home.is_dir() else Path.cwd()
+    return str(candidate)
+
+
+def linux_dialog_order(environment: dict[str, str] | None = None) -> list[str]:
+    """Prefer the dialog toolkit belonging to the active Linux desktop."""
+    values = environment if environment is not None else os.environ
+    desktop = next(
+        (
+            str(values.get(name, ""))
+            for name in (
+                "XDG_CURRENT_DESKTOP",
+                "XDG_SESSION_DESKTOP",
+                "DESKTOP_SESSION",
+            )
+            if values.get(name)
+        ),
+        "",
+    ).lower()
+    if any(name in desktop for name in ("kde", "plasma", "lxqt")):
+        return ["kdialog", "zenity", "yad"]
+    return ["zenity", "yad", "kdialog"]
+
+
+def _linux_picker_command(
+    helper: str,
+    kind: str,
+    title: str,
+    start: str,
+) -> list[str]:
+    if Path(helper).name == "kdialog":
+        if kind == "directory":
+            return [
+                helper,
+                "--title",
+                title,
+                "--getexistingdirectory",
+                start,
+            ]
+        multiple = ["--multiple", "--separate-output"] if kind == "apks" else []
+        return [
+            helper,
+            "--title",
+            title,
+            *multiple,
+            "--getopenfilename",
+            start,
+            "*.apk|Android packages (*.apk)",
+        ]
+    command = [helper, "--file-selection"]
+    if kind == "directory":
+        command.append("--directory")
+    elif kind == "apks":
+        command.extend(["--multiple", "--separator=\n"])
+    command.extend([f"--title={title}", f"--filename={start}/"])
+    if kind != "directory":
+        command.append("--file-filter=Android packages | *.apk")
+    return command
+
+
+def _dialog_output_path(value: str) -> str:
+    value = value.strip()
+    parsed = urllib.parse.urlparse(value)
+    if parsed.scheme == "file":
+        return urllib.parse.unquote(parsed.path)
+    return value
+
+
+def _dialog_command_failed(returncode: int, stderr: str) -> bool:
+    if returncode == 0:
+        return False
+    detail = stderr.lower()
+    failure_markers = (
+        "cannot open display",
+        "could not connect to display",
+        "failed to open display",
+        "unable to init server",
+        "no display",
+        "qt.qpa",
+        "platform plugin",
+        "dbus",
+        "not found",
+        "traceback",
+        "error:",
+        "failed:",
+    )
+    return returncode not in {1, 5} or any(
+        marker in detail for marker in failure_markers
+    )
+
+
+def run_linux_picker(
+    kind: str,
+    title: str,
+    start: str,
+) -> tuple[list[str] | None, list[str]]:
+    """Return selected paths, cancellation, or None when every helper failed."""
+    errors = []
+    for helper_name in linux_dialog_order():
+        helper = shutil.which(helper_name)
+        if not helper:
+            continue
+        command = _linux_picker_command(helper, kind, title, start)
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        except OSError as exc:
+            errors.append(f"{helper_name}: {exc}")
+            continue
+        if result.returncode == 0:
+            paths = [
+                _dialog_output_path(line)
+                for line in result.stdout.splitlines()
+                if line.strip()
+            ]
+            return paths, errors
+        if not _dialog_command_failed(result.returncode, result.stderr):
+            return [], errors
+        detail = result.stderr.strip() or result.stdout.strip()
+        errors.append(
+            f"{helper_name}: {detail or f'exited with {result.returncode}'}"
+        )
+    return None, errors
+
+
+def picker_unavailable_error(
+    kind: str,
+    helper_errors: list[str],
+    tk_error: Exception,
+) -> UserError:
+    details = [*helper_errors, f"Tk: {tk_error}"]
+    return UserError(
+        f"The desktop {kind} picker could not open. You can drag the game folder "
+        "onto the app instead.\n\nDetails:\n" + "\n".join(details)
+    )
+
+
 def native_choose_directory(title: str, initial: Path | None = None) -> str:
-    """Open the desktop's native folder picker, with Tk as a final fallback."""
-    start = str((initial or Path.home()).expanduser())
-    if sys.platform == "darwin":
+    """Open a Linux-native folder picker, with bundled Tk as a fallback."""
+    start = dialog_initial_directory(initial)
+    if sys.platform.startswith("linux"):
+        selected, errors = run_linux_picker("directory", title, start)
+        if selected is not None:
+            return selected[0] if selected else ""
+    else:
+        errors = []
+    try:
         return filedialog.askdirectory(
             title=title,
             initialdir=start,
             mustexist=True,
         )
-    kdialog = shutil.which("kdialog")
-    if kdialog:
-        result = subprocess.run(
-            [kdialog, "--title", title, "--getexistingdirectory", start],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return result.stdout.strip() if result.returncode == 0 else ""
-    zenity = shutil.which("zenity")
-    if zenity:
-        result = subprocess.run(
-            [
-                zenity,
-                "--file-selection",
-                "--directory",
-                f"--title={title}",
-                f"--filename={start}/",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return result.stdout.strip() if result.returncode == 0 else ""
-    return filedialog.askdirectory(title=title, initialdir=start, mustexist=True)
+    except (TclError, OSError, RuntimeError) as exc:
+        raise picker_unavailable_error("folder", errors, exc) from exc
 
 
 def native_choose_apk(title: str, initial: Path | None = None) -> str:
-    """Open the desktop's native APK picker, with Tk as a final fallback."""
-    start = str((initial or Path.home()).expanduser())
-    if sys.platform == "darwin":
+    """Open a Linux-native APK picker, with bundled Tk as a fallback."""
+    start = dialog_initial_directory(initial)
+    if sys.platform.startswith("linux"):
+        selected, errors = run_linux_picker("apk", title, start)
+        if selected is not None:
+            return selected[0] if selected else ""
+    else:
+        errors = []
+    try:
         return filedialog.askopenfilename(
             title=title,
             initialdir=start,
             filetypes=[("Android packages", "*.apk"), ("All files", "*")],
         )
-    kdialog = shutil.which("kdialog")
-    if kdialog:
-        result = subprocess.run(
-            [
-                kdialog,
-                "--title",
-                title,
-                "--getopenfilename",
-                start,
-                "*.apk|Android packages (*.apk)",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return result.stdout.strip() if result.returncode == 0 else ""
-    zenity = shutil.which("zenity")
-    if zenity:
-        result = subprocess.run(
-            [
-                zenity,
-                "--file-selection",
-                f"--title={title}",
-                f"--filename={start}/",
-                "--file-filter=Android packages | *.apk",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return result.stdout.strip() if result.returncode == 0 else ""
-    return filedialog.askopenfilename(
-        title=title,
-        initialdir=start,
-        filetypes=[("Android packages", "*.apk"), ("All files", "*")],
-    )
+    except (TclError, OSError, RuntimeError) as exc:
+        raise picker_unavailable_error("file", errors, exc) from exc
 
 
 def native_choose_apks(title: str, initial: Path | None = None) -> list[str]:
-    """Open a native picker that can select several APKs at once."""
-    start = str((initial or Path.home()).expanduser())
-    if sys.platform == "darwin":
+    """Open a Linux-native multi-APK picker, with bundled Tk as a fallback."""
+    start = dialog_initial_directory(initial)
+    if sys.platform.startswith("linux"):
+        selected, errors = run_linux_picker("apks", title, start)
+        if selected is not None:
+            return selected
+    else:
+        errors = []
+    try:
         return list(
             filedialog.askopenfilenames(
                 title=title,
                 initialdir=start,
-                filetypes=[
-                    ("Android packages", "*.apk"),
-                    ("All files", "*"),
-                ],
+                filetypes=[("Android packages", "*.apk"), ("All files", "*")],
             )
         )
-    kdialog = shutil.which("kdialog")
-    if kdialog:
-        result = subprocess.run(
-            [
-                kdialog,
-                "--title",
-                title,
-                "--multiple",
-                "--separate-output",
-                "--getopenfilename",
-                start,
-                "*.apk|Android packages (*.apk)",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return (
-            [line for line in result.stdout.splitlines() if line]
-            if result.returncode == 0
-            else []
-        )
-    zenity = shutil.which("zenity")
-    if zenity:
-        result = subprocess.run(
-            [
-                zenity,
-                "--file-selection",
-                "--multiple",
-                "--separator=\n",
-                f"--title={title}",
-                f"--filename={start}/",
-                "--file-filter=Android packages | *.apk",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-        )
-        return (
-            [line for line in result.stdout.splitlines() if line]
-            if result.returncode == 0
-            else []
-        )
-    return list(
-        filedialog.askopenfilenames(
-            title=title,
-            initialdir=start,
-            filetypes=[("Android packages", "*.apk"), ("All files", "*")],
-        )
-    )
+    except (TclError, OSError, RuntimeError) as exc:
+        raise picker_unavailable_error("file", errors, exc) from exc
 
 
 def load_managed_key() -> tuple[Path, str, str]:
@@ -1175,9 +1234,16 @@ def build_release_manifest(
     return path
 
 
+def linux_launcher_executable() -> Path:
+    """Return the actual runnable command for source and frozen Linux builds."""
+    if bool(getattr(sys, "frozen", False)):
+        return Path(sys.executable).expanduser().resolve()
+    return SCRIPT_DIR / "launch.sh"
+
+
 def desktop_entry_text() -> str:
     """Build a launcher entry that remains tied to this app folder."""
-    launcher = SCRIPT_DIR / "launch.sh"
+    launcher = linux_launcher_executable()
     icon = RESOURCE_DIR / "assets" / "quest-apk-renamer.svg"
     return "\n".join(
         [
@@ -2735,7 +2801,14 @@ class RenamerApp:
                 )
             connected, unavailable = parse_adb_devices(devices_result.stdout)
             if not connected:
-                if unavailable:
+                permission_blocked = any(
+                    "no USB permission" in device for device in unavailable
+                )
+                if permission_blocked:
+                    label = "USB permission needed"
+                    detail = "Install Android udev rules, then reconnect"
+                    tone = "warning"
+                elif unavailable:
                     label = "USB approval needed"
                     detail = "Put on the Quest and approve debugging"
                     tone = "warning"
@@ -2750,9 +2823,13 @@ class RenamerApp:
                             "label": label,
                             "detail": detail,
                             "tone": tone,
-                            "state": "unauthorized"
-                            if unavailable
-                            else "disconnected",
+                            "state": (
+                                "permission"
+                                if permission_blocked
+                                else "unauthorized"
+                                if unavailable
+                                else "disconnected"
+                            ),
                         },
                     )
                 )
@@ -3029,13 +3106,49 @@ class RenamerApp:
             return
         messagebox.showinfo("Debug log saved", f"Saved to:\n\n{selected}")
 
+    def _show_picker_error(self, error: UserError, parent=None) -> None:
+        self._append_log(f"File picker unavailable: {error}")
+        options = {"parent": parent} if parent is not None else {}
+        messagebox.showerror("File picker unavailable", str(error), **options)
+
+    def _choose_directory(
+        self,
+        title: str,
+        initial: Path | None = None,
+        parent=None,
+    ) -> str:
+        try:
+            return native_choose_directory(title, initial)
+        except UserError as exc:
+            self._show_picker_error(exc, parent)
+            return ""
+
+    def _choose_apk(self, title: str, initial: Path | None = None) -> str:
+        try:
+            return native_choose_apk(title, initial)
+        except UserError as exc:
+            self._show_picker_error(exc)
+            return ""
+
+    def _choose_apks(
+        self,
+        title: str,
+        initial: Path | None = None,
+        parent=None,
+    ) -> list[str]:
+        try:
+            return native_choose_apks(title, initial)
+        except UserError as exc:
+            self._show_picker_error(exc, parent)
+            return []
+
     def choose_folder(self) -> None:
         initial = (
             Path(self.source_folder_var.get()).parent
             if self.source_folder_var.get()
             else Path.home() / "Downloads"
         )
-        selected = native_choose_directory(
+        selected = self._choose_directory(
             "Choose the folder containing your APK and OBB",
             initial,
         )
@@ -3054,7 +3167,7 @@ class RenamerApp:
             if self.source_folder_var.get()
             else Path.home() / "Downloads"
         )
-        selected = native_choose_apk(
+        selected = self._choose_apk(
             "Choose a single Quest APK",
             initial,
         )
@@ -3644,7 +3757,7 @@ class RenamerApp:
             if self.output_var.get()
             else Path.home()
         )
-        selected = native_choose_directory("Choose the output folder", initial)
+        selected = self._choose_directory("Choose the output folder", initial)
         if selected:
             self.output_var.set(selected)
             self.output_summary_var.set(
@@ -3662,7 +3775,7 @@ class RenamerApp:
                 else Path.home() / "Downloads"
             )
         )
-        selected = native_choose_directory(
+        selected = self._choose_directory(
             "Choose the finished renamed folder",
             initial,
         )
@@ -3863,21 +3976,23 @@ class RenamerApp:
         self._refresh_bulk_tree()
 
     def _bulk_add_one(self) -> None:
-        selected = native_choose_directory(
+        selected = self._choose_directory(
             "Add a game folder to the batch",
             self.bulk_paths[-1].parent
             if self.bulk_paths
             else Path.home() / "Downloads",
+            self.bulk_window,
         )
         if selected:
             self._add_bulk_path(Path(selected))
 
     def _bulk_add_apks(self) -> None:
-        selected = native_choose_apks(
+        selected = self._choose_apks(
             "Choose one or more Quest APKs",
             self.bulk_paths[-1].parent
             if self.bulk_paths
             else Path.home() / "Downloads",
+            self.bulk_window,
         )
         if not selected:
             return
@@ -3902,11 +4017,12 @@ class RenamerApp:
             )
 
     def _bulk_add_parent(self) -> None:
-        selected = native_choose_directory(
+        selected = self._choose_directory(
             "Choose a parent containing game folders",
             self.bulk_paths[-1].parent
             if self.bulk_paths
             else Path.home() / "Downloads",
+            self.bulk_window,
         )
         if not selected:
             return
@@ -4505,11 +4621,18 @@ class RenamerApp:
             if not connected:
                 extra = ""
                 if unavailable:
-                    extra = (
-                        "\n\nDetected but not ready: "
-                        + ", ".join(unavailable)
-                        + ". Put on the headset and approve USB debugging."
-                    )
+                    if any("no USB permission" in item for item in unavailable):
+                        extra = (
+                            "\n\nLinux detected the USB device but ADB cannot access "
+                            "it. Install your distro's Android udev rules, reconnect "
+                            "the Quest, and approve USB debugging."
+                        )
+                    else:
+                        extra = (
+                            "\n\nDetected but not ready: "
+                            + ", ".join(unavailable)
+                            + ". Put on the headset and approve USB debugging."
+                        )
                 raise UserError(
                     "No ready Quest was found. Connect it by USB, keep it awake, "
                     "and approve the USB debugging prompt inside the headset." + extra
@@ -6197,7 +6320,7 @@ class RenamerApp:
                 "The app will remind you to back it up afterward.",
             )
             return
-        selected = native_choose_directory(
+        selected = self._choose_directory(
             "Choose where to save the signing-key backup",
             Path.home() / "Documents",
         )
@@ -6265,7 +6388,7 @@ class RenamerApp:
             if self.last_output
             else existing_parent(Path(self.output_var.get() or Path.home()))
         )
-        selected = native_choose_directory(
+        selected = self._choose_directory(
             "Choose an old Quest APK Renamer output to move to Trash",
             initial,
         )
@@ -6526,12 +6649,25 @@ class RenamerApp:
 
     @staticmethod
     def _open_path(path: Path) -> None:
-        if sys.platform.startswith("win"):
-            os.startfile(str(path))  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", str(path)])
-        else:
-            subprocess.Popen(["xdg-open", str(path)])
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(str(path))  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                xdg_open = shutil.which("xdg-open")
+                gio = shutil.which("gio")
+                if xdg_open:
+                    subprocess.Popen([xdg_open, str(path)])
+                elif gio:
+                    subprocess.Popen([gio, "open", str(path)])
+                else:
+                    raise OSError("Neither xdg-open nor gio is available.")
+        except OSError as exc:
+            messagebox.showerror(
+                "Could not open that location",
+                f"Open this path manually:\n\n{path}\n\n{exc}",
+            )
 
     def show_key_info(self) -> None:
         exists = MANAGED_KEYSTORE.is_file()
@@ -6573,6 +6709,10 @@ def main() -> int:
     else:
         root = Tk()
     app = RenamerApp(root)
+    if "--platform-smoke-test" in sys.argv[1:]:
+        root.update_idletasks()
+        root.destroy()
+        return 0
     if len(sys.argv) > 1:
         candidate = Path(sys.argv[1]).expanduser()
         if candidate.is_dir():

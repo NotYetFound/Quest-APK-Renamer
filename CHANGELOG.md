@@ -4,13 +4,23 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.3.2] - 2026-07-31
+
 ### Changed
 
 - Relied on GitHub's displayed release-asset SHA-256 digests instead of
   publishing redundant platform checksum files.
+- Added packaged Linux launch checks on Ubuntu 26.04, Debian 12, and current
+  Fedora before a tagged build can be published.
 
 ### Fixed
 
+- Made Linux folder/APK pickers desktop-aware, normalized missing starting
+  directories, and fall back through other native helpers and bundled Tk when
+  a dialog backend fails instead of silently doing nothing.
+- Corrected frozen Linux app-launcher entries to target the packaged executable.
+- Added distinct Linux ADB guidance when USB access is blocked by missing udev
+  permissions.
 - Prevented legacy `v1.8` and `v1.9` tags from appearing as updates to the
   renumbered v1.3 release, and included published prereleases in update checks.
 
@@ -139,3 +149,4 @@ All notable changes to Quest APK Renamer are recorded here.
 [1.1.0]: ../../releases/tag/v1.8.0-beta.1
 [1.2.0]: ../../releases/tag/v1.9.0-beta.1
 [1.3.0]: ../../releases/tag/v1.3.0-beta.1
+[1.3.2]: ../../releases/tag/v1.3.2-beta.1

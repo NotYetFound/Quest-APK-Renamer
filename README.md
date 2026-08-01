@@ -17,7 +17,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.3.0 beta 1" src="https://img.shields.io/badge/version-1.3.0--beta.1-6f5ef7">
+  <img alt="Version 1.3.2 beta 1" src="https://img.shields.io/badge/version-1.3.2--beta.1-6f5ef7">
   <img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-26334d">
   <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2ea44f">
 </p>
@@ -41,7 +41,8 @@ Pick a Quest game folder and Quest APK Renamer will:
 - check the bundle, Android tools, and available storage;
 - rebuild, sign, and verify the renamed APK;
 - rename the OBB files and update `release.manifest`;
-- replaces libovrplatformloader.so to allow running apk on older firmwares
+- optionally replace `libovrplatformloader.so`, when present, to improve
+  compatibility with older Quest firmware;
 - create readable text and JSON reports; and
 - install and verify the finished bundle over USB.
 
@@ -53,17 +54,32 @@ failed-OBB retry, signing-key backups, and a persistent activity log.
 
 ## Download
 
-Open the [1.3.0 beta 1 release](../../releases/tag/v1.3.0-beta.1) and download the
+Open the [1.3.2 beta 1 release](../../releases/tag/v1.3.2-beta.1) and download the
 package for your computer:
 
 | Platform | File |
 | --- | --- |
-| Windows | `Quest-APK-Renamer-1.3.0-Setup.exe` |
-| Apple Silicon Mac | `Quest-APK-Renamer-1.3.0-macOS-arm64.dmg` |
-| Intel Mac | `Quest-APK-Renamer-1.3.0-macOS-x86_64.dmg` |
-| Linux x86_64 | `Quest-APK-Renamer-1.3.0-Linux-x86_64.tar.gz` |
+| Windows | `Quest-APK-Renamer-1.3.2-Setup.exe` |
+| Apple Silicon Mac | `Quest-APK-Renamer-1.3.2-macOS-arm64.dmg` |
+| Intel Mac | `Quest-APK-Renamer-1.3.2-macOS-x86_64.dmg` |
+| Linux x86_64 | `Quest-APK-Renamer-1.3.2-Linux-x86_64.tar.gz` |
 
 On Linux, extract the archive and run `./install.sh`.
+
+### Linux compatibility
+
+The portable x86_64 build targets glibc 2.35 or newer. That covers Ubuntu
+22.04+, Debian 12+, Fedora 36+, and current Arch/openSUSE releases. Alpine and
+other musl-based distributions are not currently supported.
+
+Folder selection works on Wayland and X11. The app prefers `zenity` on GNOME,
+Xfce, Cinnamon, MATE, COSMIC, and similar desktops; prefers `kdialog` on KDE
+Plasma and LXQt; supports `yad`; and automatically falls back to its bundled
+Tk picker when a desktop helper is absent or fails. None of those external
+dialog tools are required.
+
+If Linux detects the Quest but reports **USB permission needed**, install your
+distro's Android udev rules, reconnect the headset, and approve USB debugging.
 
 Windows builds are not currently code-signed, and macOS builds are not
 notarized, so your system may show an unknown-developer warning. GitHub shows
