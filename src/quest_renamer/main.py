@@ -96,8 +96,10 @@ def main() -> int:
     QCoreApplication.setApplicationName("Quest APK Renamer")
     QCoreApplication.setApplicationVersion(__version__)
 
-    if sys.platform.startswith("linux"):
-        os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+    # The packaged QML set deliberately includes only the Basic control style.
+    # Use it consistently on every desktop while still allowing an explicit
+    # developer override before startup.
+    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
     smoke_test = "--smoke-test" in sys.argv[1:]
     launch_folder = initial_folder(sys.argv[1:])
