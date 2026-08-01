@@ -14,7 +14,7 @@ from quest_renamer.domain.analysis import ApkAnalysis, ArchiveAnalysis, Manifest
 from quest_renamer.domain.operations import CancellationToken
 from quest_renamer.infrastructure.process_runner import ProcessRunner
 from quest_renamer.infrastructure.signer_inspection import (
-    inspect_signer_identity,
+    inspect_signature_details,
     load_signer_registry,
 )
 from quest_renamer.infrastructure.toolchain import Toolchain
@@ -150,12 +150,13 @@ class ApktoolAnalyzer:
         sha256 = hash_apk(apk, token)
 
         signer_identity = None
+        signer_lineage = ""
         if self.toolchain.signer is not None:
             progress(0.25, "Reading signing certificate")
             registry = (
                 load_signer_registry(self.signer_registry) if self.signer_registry else ()
             )
-            signer_identity = inspect_signer_identity(
+            signature = inspect_signature_details(
                 apk,
                 java=self.toolchain.java,
                 signer=self.toolchain.signer,
@@ -163,6 +164,8 @@ class ApktoolAnalyzer:
                 runner=self.runner,
                 token=token,
             )
+            signer_identity = signature.identity
+            signer_lineage = signature.lineage
 
         try:
             with tempfile.TemporaryDirectory(
@@ -211,4 +214,5 @@ class ApktoolAnalyzer:
             debuggable=manifest.debuggable,
             has_legacy_loader=archive.has_legacy_loader,
             signer_identity=signer_identity,
+            signer_lineage=signer_lineage,
         )

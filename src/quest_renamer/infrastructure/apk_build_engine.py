@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
-from quest_renamer.domain.build import BuildError, BuildResult
+from quest_renamer.domain.build import BuildError, BuildResult, PackageRewriteReport
 from quest_renamer.domain.models import BuildRequest
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
 from quest_renamer.domain.signers import (
@@ -204,18 +204,32 @@ class StagedApkBuildEngine:
                     token=token,
                     log=log,
                 )
-                progress(0.30, "Updating app identity")
-                rewrite = replace_package_references(
-                    decoded,
-                    request.source.package_name,
-                    request.package_name,
-                    token=token,
-                    log=log,
-                )
-                if rewrite.changed_occurrences == 0:
-                    raise BuildError(
-                        "The original package ID was not found in the decoded Android files."
+                if request.package_name == request.source.package_name:
+                    if PATCH_ID not in request.patches:
+                        raise BuildError(
+                            "Keeping the original package ID is only supported for a "
+                            "patch-only build."
+                        )
+                    progress(0.30, "Keeping existing app identity")
+                    rewrite = PackageRewriteReport(0, 0)
+                    log(
+                        "Package ID is unchanged for this patch-only build; "
+                        "package-reference rewriting was skipped."
                     )
+                else:
+                    progress(0.30, "Updating app identity")
+                    rewrite = replace_package_references(
+                        decoded,
+                        request.source.package_name,
+                        request.package_name,
+                        token=token,
+                        log=log,
+                    )
+                    if rewrite.changed_occurrences == 0:
+                        raise BuildError(
+                            "The original package ID was not found in the decoded "
+                            "Android files."
+                        )
                 if PATCH_ID in request.patches:
                     apply_older_firmware_patch(
                         decoded,

@@ -27,12 +27,12 @@ def with_tag(package_name: str, tag: str = "dev") -> str:
     return ".".join(parts)
 
 
-def package_id_error(value: str, source: str = "") -> str:
+def package_id_error(value: str, source: str = "", *, allow_same: bool = False) -> str:
     value = value.strip()
     if not value:
         return "Enter a package ID."
     if not is_valid_package_id(value):
         return "Use dot-separated words containing only letters, numbers, and underscores."
-    if source and value == source.strip():
+    if source and value == source.strip() and not allow_same:
         return "Choose a different ID so Quest treats this as a separate app."
     return ""

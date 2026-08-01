@@ -479,7 +479,7 @@ ApplicationWindow {
                                 }
                                 AppButton {
                                     text: appController.installActionLabel
-                                    enabled: !appController.isBusy
+                                    enabled: appController.canInstallFolder
                                     onClicked: fileDialogController.chooseFolder(
                                         "install",
                                         "Choose a finished game folder",
@@ -575,7 +575,7 @@ ApplicationWindow {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 218
+                                    Layout.preferredHeight: 264
                                     radius: 3
                                     color: window.panel
                                     border.width: 1
@@ -640,13 +640,40 @@ ApplicationWindow {
                                             font.pixelSize: 10
                                             elide: Text.ElideRight
                                         }
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 1
+                                            color: "#353535"
+                                        }
+                                        Text {
+                                            text: "SIGNING LINEAGE"
+                                            color: "#777777"
+                                            font.pixelSize: 9
+                                            font.weight: Font.DemiBold
+                                            font.letterSpacing: 1
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: appController.signerLineage
+                                            color: appController.hasBundle ? "#a9a9a9" : "#696969"
+                                            font.pixelSize: 10
+                                            elide: Text.ElideMiddle
+                                            ToolTip.visible: lineageMouse.containsMouse
+                                            ToolTip.text: text
+                                            MouseArea {
+                                                id: lineageMouse
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                acceptedButtons: Qt.NoButton
+                                            }
+                                        }
                                         Item { Layout.fillHeight: true }
                                     }
                                 }
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 218
+                                    Layout.preferredHeight: 264
                                     radius: 3
                                     color: window.panel
                                     border.width: 1
@@ -738,6 +765,15 @@ ApplicationWindow {
                                             Layout.fillWidth: true
                                             compact: true
                                             enabled: !appController.isBusy
+                                            title: "Replace source after build"
+                                            detail: "Verify first, then replace the selected folder"
+                                            checked: appController.settings.replaceSourceAfterBuild
+                                            onChanged: value => appController.requestReplaceSource(value)
+                                        }
+                                        SettingRow {
+                                            Layout.fillWidth: true
+                                            compact: true
+                                            enabled: !appController.isBusy
                                             title: "Delete installed folder after success"
                                             detail: "Only after the APK and every OBB are verified on Quest"
                                             checked: appController.settings.deleteSourceAfterInstall
@@ -748,8 +784,16 @@ ApplicationWindow {
                             }
 
                             Rectangle {
+                                property bool operationActive: appController.isAnalyzing
+                                                               || appController.isBuilding
+                                                               || appController.isInstalling
+                                property real operationProgress: appController.isInstalling
+                                                                 ? appController.installProgress
+                                                                 : appController.isBuilding
+                                                                 ? appController.buildProgress
+                                                                 : appController.analysisProgress
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 54
+                                Layout.preferredHeight: operationActive ? 68 : 54
                                 radius: 3
                                 color: window.panel
                                 border.width: 1
@@ -780,16 +824,23 @@ ApplicationWindow {
                                     }
                                     Text {
                                         text: appController.isInstalling
-                                              ? appController.installLabel + "  " + Math.round(appController.installProgress * 100) + "%"
+                                              ? appController.installLabel
                                               : appController.isBuilding
-                                              ? appController.buildLabel + "  " + Math.round(appController.buildProgress * 100) + "%"
+                                              ? appController.buildLabel
                                               : appController.isAnalyzing
-                                              ? appController.analysisLabel + "  " + Math.round(appController.analysisProgress * 100) + "%"
+                                              ? appController.analysisLabel
                                               : appController.notice
                                         color: "#c7c7c7"
                                         font.pixelSize: 11
                                         Layout.fillWidth: true
                                         elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        visible: parent.parent.operationActive
+                                        text: Math.round(parent.parent.operationProgress * 100) + "%"
+                                        color: "#d8d8d8"
+                                        font.pixelSize: 11
+                                        font.weight: Font.DemiBold
                                     }
                                     AppButton {
                                         visible: appController.noticeTone === "error"
@@ -826,23 +877,20 @@ ApplicationWindow {
                                     }
                                 }
                                 Rectangle {
-                                    visible: appController.isAnalyzing
-                                             || appController.isBuilding
-                                             || appController.isInstalling
+                                    visible: parent.operationActive
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.bottom: parent.bottom
-                                    height: 2
+                                    anchors.leftMargin: 15
+                                    anchors.rightMargin: 15
+                                    anchors.bottomMargin: 8
+                                    height: 6
+                                    radius: 3
                                     color: "#303030"
                                     Rectangle {
-                                        width: parent.width * (
-                                            appController.isInstalling
-                                            ? appController.installProgress
-                                            : appController.isBuilding
-                                            ? appController.buildProgress
-                                            : appController.analysisProgress
-                                        )
+                                        width: parent.width * parent.parent.operationProgress
                                         height: parent.height
+                                        radius: 3
                                         color: window.accent
                                         Behavior on width { NumberAnimation { duration: 120 } }
                                     }
@@ -1369,36 +1417,6 @@ ApplicationWindow {
                                 color: window.panel
                                 border.width: 1
                                 border.color: window.line
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 18
-                                    spacing: 0
-                                    Text {
-                                        text: "OUTPUT"
-                                        color: "#777777"
-                                        font.pixelSize: 9
-                                        font.weight: Font.DemiBold
-                                        font.letterSpacing: 1
-                                        Layout.bottomMargin: 8
-                                    }
-                                    SettingRow {
-                                        Layout.fillWidth: true
-                                        title: "Replace source after build"
-                                        detail: "Verify first, use the original path, then move unedited files to Trash"
-                                        enabled: !appController.isBusy
-                                        checked: appController.settings.replaceSourceAfterBuild
-                                        onChanged: value => appController.requestReplaceSource(value)
-                                    }
-                                }
-                            }
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 116
-                                radius: 3
-                                color: window.panel
-                                border.width: 1
-                                border.color: window.line
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.margins: 18
@@ -1435,7 +1453,7 @@ ApplicationWindow {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 218
+                                Layout.preferredHeight: 238
                                 radius: 3
                                 color: window.panel
                                 border.width: 1
@@ -1461,8 +1479,10 @@ ApplicationWindow {
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        Layout.preferredHeight: 44
-                                        spacing: 10
+                                        Layout.preferredHeight: 54
+                                        Layout.topMargin: 4
+                                        Layout.bottomMargin: 4
+                                        spacing: 14
                                         Text {
                                             Layout.fillWidth: true
                                             text: updateController.status
@@ -1474,6 +1494,8 @@ ApplicationWindow {
                                         }
                                         AppButton {
                                             text: updateController.isBusy ? "Checking…" : "Check now"
+                                            Layout.preferredWidth: 108
+                                            Layout.preferredHeight: 36
                                             enabled: !updateController.isBusy
                                             onClicked: updateController.checkNow()
                                         }

@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from quest_renamer.domain.models import BuildRequest, BundleDraft, DeviceSnapshot
+from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.services.preflight import AutomaticPreflight, default_output_folder
 
 
@@ -29,6 +30,27 @@ class PreflightTests(unittest.TestCase):
             self.assertTrue(result.ready)
             self.assertTrue(result.warnings)
             self.assertIn("Quest capacity", result.summary)
+
+    def test_default_output_uses_the_renamed_suffix(self) -> None:
+        source = Path("/games/Example")
+
+        self.assertEqual(default_output_folder(source), Path("/games/Example - Renamed"))
+
+    def test_patch_only_build_can_keep_the_existing_package_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            request = self._request(Path(temporary))
+            request = BuildRequest(
+                request.source,
+                request.source.package_name,
+                request.output_root,
+                patches=(PATCH_ID,),
+            )
+
+            result = AutomaticPreflight(tools_ready=True).check(request)
+
+            self.assertTrue(result.ready)
+            identity = next(check for check in result.checks if check.key == "identity")
+            self.assertIn("patch-only", identity.detail)
 
     def test_output_inside_source_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

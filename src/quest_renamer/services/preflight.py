@@ -14,6 +14,7 @@ from quest_renamer.domain.models import (
 )
 from quest_renamer.domain.package_ids import package_id_error
 from quest_renamer.domain.preflight import PreflightResult
+from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 
 MIB = 1024 * 1024
 GIB = 1024 * MIB
@@ -21,7 +22,7 @@ GIB = 1024 * MIB
 
 def default_output_folder(source: Path) -> Path:
     """Choose a visible sibling without nesting output inside the source."""
-    return source.parent / f"{source.name} — Development"
+    return source.parent / f"{source.name} - Renamed"
 
 
 def _same_or_inside(path: Path, parent: Path) -> bool:
@@ -75,13 +76,25 @@ class AutomaticPreflight:
             )
         )
 
-        identity_problem = package_id_error(request.package_name, source.package_name)
+        patch_only = (
+            PATCH_ID in request.patches and request.package_name == source.package_name
+        )
+        identity_problem = package_id_error(
+            request.package_name,
+            source.package_name,
+            allow_same=patch_only,
+        )
         checks.append(
             ReadinessCheck(
                 "identity",
                 "New app ID",
                 CheckState.FAILED if identity_problem else CheckState.PASSED,
-                identity_problem or "The new app ID is valid and separate.",
+                identity_problem
+                or (
+                    "The existing app ID will be kept for this patch-only build."
+                    if patch_only
+                    else "The new app ID is valid and separate."
+                ),
             )
         )
 

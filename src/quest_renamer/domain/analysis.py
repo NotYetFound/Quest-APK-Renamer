@@ -48,3 +48,4 @@ class ApkAnalysis:
     debuggable: bool = False
     has_legacy_loader: bool = False
     signer_identity: SignerIdentity | None = None
+    signer_lineage: str = ""

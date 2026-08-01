@@ -27,6 +27,7 @@ class BundleDraft:
     package_name: str = ""
     version_code: str = ""
     signer_identity: SignerIdentity | None = None
+    signer_lineage: str = ""
 
     @property
     def total_size(self) -> int:

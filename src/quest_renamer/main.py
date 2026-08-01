@@ -90,6 +90,30 @@ def configure_packaged_rendering(
     target.setdefault("QT_QUICK_BACKEND", "software")
 
 
+def older_firmware_patch_candidates(
+    package_root: Path,
+    data_root: Path,
+    *,
+    override: str = "",
+) -> tuple[Path, ...]:
+    """Return supported packaged, source-tree, and repaired loader locations."""
+    candidates: list[Path] = []
+    if override:
+        candidates.append(Path(override).expanduser())
+    candidates.extend(
+        (
+            package_root / "tools" / "libovrplatformloader.so",
+            package_root
+            / "assets"
+            / "patches"
+            / "ovrplatform"
+            / "libovrplatformloader.so",
+            data_root / "tools" / "libovrplatformloader.so",
+        )
+    )
+    return tuple(candidates)
+
+
 def support_tool_summary(
     package_root: Path,
     toolchain: Toolchain,
@@ -138,14 +162,10 @@ def main() -> int:
         executable=Path(sys.executable),
         data_root=paths.data,
     )
-    patch_candidates = []
-    if override := os.environ.get("QAR_OLDER_FIRMWARE_PATCH"):
-        patch_candidates.append(Path(override).expanduser())
-    patch_candidates.extend(
-        (
-            package_root / "assets" / "patches" / "ovrplatform" / "libovrplatformloader.so",
-            paths.data / "tools" / "libovrplatformloader.so",
-        )
+    patch_candidates = older_firmware_patch_candidates(
+        package_root,
+        paths.data,
+        override=os.environ.get("QAR_OLDER_FIRMWARE_PATCH", ""),
     )
     older_firmware_asset = next(
         (

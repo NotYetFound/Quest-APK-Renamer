@@ -16,6 +16,7 @@ from quest_renamer.domain.installation import (
     InstalledPackageConflict,
 )
 from quest_renamer.domain.models import BundleDraft, DeviceSnapshot
+from quest_renamer.domain.signers import SignerIdentity
 from quest_renamer.infrastructure.app_paths import AppPaths
 from quest_renamer.infrastructure.build_recovery import write_build_recovery
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
@@ -23,6 +24,7 @@ from quest_renamer.infrastructure.signing_backup import SigningIdentityManager
 from quest_renamer.main import (
     configure_packaged_rendering,
     initial_folder,
+    older_firmware_patch_candidates,
     package_resource_root,
 )
 from quest_renamer.presentation.app_controller import AppController
@@ -35,6 +37,17 @@ class ImmediateAnalyzer:
         if callable(progress):
             progress(1.0, "APK checked")
         return ApkAnalysis(apk.resolve(), "com.example.game", version_code="42")
+
+
+class LineageAnalyzer:
+    def analyze(self, apk: Path, **kwargs: object) -> ApkAnalysis:
+        return ApkAnalysis(
+            apk.resolve(),
+            "com.example.game",
+            signer_identity=SignerIdentity("nif", "NIF", "NothingIsFree"),
+            signer_lineage="Previously signed by Meta (META)",
+            has_legacy_loader=True,
+        )
 
 
 class ImmediateBuilder:
@@ -138,6 +151,16 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(
             package_resource_root(frozen_root=frozen),
             frozen / "quest_renamer",
+        )
+
+    def test_packaged_firmware_loader_is_a_supported_candidate(self) -> None:
+        package_root = Path("/app/_internal/quest_renamer")
+        data_root = Path("/home/test/.local/share/quest-renamer")
+
+        candidates = older_firmware_patch_candidates(package_root, data_root)
+
+        self.assertEqual(
+            candidates[0], package_root / "tools" / "libovrplatformloader.so"
         )
 
     def test_packaged_linux_uses_software_rendering(self) -> None:
@@ -319,8 +342,55 @@ class ControllerTests(unittest.TestCase):
 
             self.assertEqual(
                 controller.outputFolder,
-                str(destination.resolve() / "source — Development"),
+                str(destination.resolve() / "source - Renamed"),
             )
+
+    def test_dashboard_reports_signer_lineage_and_allows_patch_only_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            controller = AppController(
+                analyzer=LineageAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=object(),  # type: ignore[arg-type]
+                older_firmware_asset_available=True,
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.sourcePackage == "com.example.game")
+            controller.setSetting("older_firmware_patch", True)
+            controller.setPackageId("com.example.game")
+
+            self.assertTrue(controller.canBuild)
+            self.assertEqual(controller.buildActionLabel, "Apply firmware patch")
+            self.assertIn("NothingIsFree", controller.signerLineage)
+            self.assertIn("Previously signed by Meta", controller.signerLineage)
+
+    def test_finished_build_uses_cross_desktop_path_opener(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            opened: list[Path] = []
+            controller = AppController(
+                analyzer=ImmediateAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=ImmediateBuilder(),
+                path_opener=lambda path: not opened.append(path),
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.canBuild)
+            controller.requestBuild()
+            self._wait_until(lambda: controller.buildActionLabel == "Open finished folder")
+            controller.requestBuild()
+
+            self.assertEqual(opened, [Path(controller.outputFolder)])
 
     def test_analysis_and_build_complete_without_blocking_the_ui_thread(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -373,6 +443,22 @@ class ControllerTests(unittest.TestCase):
             assert installer.installed is not None
             self.assertEqual(installer.installed.package_name, "com.example.game")
             self.assertEqual(len(installer.installed.obbs), 1)
+
+    def test_finished_folder_install_is_disabled_until_a_quest_is_connected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            controller = AppController(
+                bundle_installer=ImmediateBundleInstaller(),
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+
+            self.assertFalse(controller.canInstallFolder)
+
+            controller._apply_device_snapshot(
+                DeviceSnapshot(True, "connected", "QUEST123", "Quest 3", 1_000_000)
+            )
+
+            self.assertTrue(controller.canInstallFolder)
 
     def test_cleanup_removes_only_the_folder_that_was_verified_and_installed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

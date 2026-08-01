@@ -35,6 +35,20 @@ class ManifestWritingRunner:
         return CommandResult(command, 0, ())
 
 
+class SignatureAndManifestRunner(ManifestWritingRunner):
+    def run(self, arguments: object, **kwargs: object) -> CommandResult:
+        command = tuple(str(value) for value in arguments)  # type: ignore[union-attr]
+        if "--onlyVerify" in command:
+            output = (
+                "Signer #1 certificate DN: CN=Quest APK Renamer, O=QAR, "
+                "L=Previously signed by Example Studio (EXAMPLE)",
+                "Signer #1 certificate issuer: CN=Quest APK Renamer, O=QAR",
+                "Verified using v2 scheme (APK Signature Scheme v2): true",
+            )
+            return CommandResult(command, 0, output)
+        return super().run(arguments, **kwargs)
+
+
 class ApkAnalyzerTests(unittest.TestCase):
     def test_manifest_parser_returns_typed_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -88,6 +102,31 @@ class ApkAnalyzerTests(unittest.TestCase):
             self.assertEqual(result.abis, ("arm64-v8a",))
             self.assertEqual(result.dex_files, 1)
             self.assertEqual(len(result.sha256), 64)
+
+    def test_analyzer_reports_the_embedded_signer_lineage(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            apk = root / "game.apk"
+            with zipfile.ZipFile(apk, "w") as archive:
+                archive.writestr("classes.dex", b"dex")
+            java = root / "java"
+            apktool = root / "apktool.jar"
+            signer = root / "signer.jar"
+            for tool in (java, apktool, signer):
+                tool.touch()
+            analyzer = ApktoolAnalyzer(
+                Toolchain(java, None, apktool, signer),
+                runner=SignatureAndManifestRunner(),  # type: ignore[arg-type]
+                temporary_root=root,
+            )
+
+            result = analyzer.analyze(apk)
+
+            self.assertEqual(
+                result.signer_lineage,
+                "Previously signed by Example Studio (EXAMPLE)",
+            )
+            self.assertIsNotNone(result.signer_identity)
 
     def test_hash_honors_a_pre_cancelled_operation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

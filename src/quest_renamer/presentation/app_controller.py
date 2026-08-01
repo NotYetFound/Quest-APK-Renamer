@@ -41,6 +41,7 @@ from quest_renamer.infrastructure.build_recovery import (
     clear_build_recovery,
     read_build_recovery,
 )
+from quest_renamer.infrastructure.desktop_open import open_local_path
 from quest_renamer.infrastructure.local_bundles import (
     BundleSelectionError,
     LocalBundleInspector,
@@ -162,6 +163,7 @@ class AppController(QObject):
         activity_log: ActivityLog | None = None,
         paths: AppPaths | None = None,
         move_to_trash: Callable[[Path], None] | None = None,
+        path_opener: Callable[[Path], bool] | None = None,
         support_tool_summary: str = "Not reported",
         parent: QObject | None = None,
     ) -> None:
@@ -178,6 +180,7 @@ class AppController(QObject):
         self._settings_store = settings_store or JsonSettingsStore(self._paths.settings_file)
         self._activity_log = activity_log or ActivityLog(self._paths.log_file)
         self._move_to_trash = move_to_trash
+        self._path_opener = path_opener or open_local_path
         self._support_tool_summary = support_tool_summary
         self._external_busy_provider: Callable[[], bool] = lambda: False
         self._settings = self._settings_store.load()
@@ -342,6 +345,15 @@ class AppController(QObject):
         )
 
     @Property(bool, notify=readinessChanged)
+    def canInstallFolder(self) -> bool:
+        return (
+            not self.isBusy
+            and self._device.connected
+            and bool(self._device.serial)
+            and self._bundle_installer is not None
+        )
+
+    @Property(bool, notify=readinessChanged)
     def canRetryObbs(self) -> bool:
         return self._retry_bundle is not None and not self.isBusy
 
@@ -373,6 +385,8 @@ class AppController(QObject):
     def buildLabel(self) -> str:
         if self._build_message:
             return self._build_message
+        if self._patch_only_build():
+            return "Applying older-firmware patch"
         if self._settings.replace_source_after_build:
             return "Building verified replacement"
         return "Building renamed copy"
@@ -383,6 +397,12 @@ class AppController(QObject):
             return "Cancel safely"
         if self._build_result is not None:
             return "Open finished folder"
+        if self._patch_only_build():
+            return (
+                "Apply patch and replace source"
+                if self._settings.replace_source_after_build
+                else "Apply firmware patch"
+            )
         if self._settings.replace_source_after_build:
             return "Build and replace source"
         return "Build renamed copy"
@@ -452,6 +472,16 @@ class AppController(QObject):
             return ""
         return f"Version {self._bundle.version_code}"
 
+    @Property(str, notify=bundleChanged)
+    def signerLineage(self) -> str:
+        if not self._bundle:
+            return "Signer appears after APK analysis"
+        identity = self._bundle.signer_identity
+        signer = identity.full_name if identity is not None else "Unrecognized signer"
+        if self._bundle.signer_lineage:
+            return f"Current: {signer}  •  {self._bundle.signer_lineage}"
+        return f"Current: {signer}"
+
     @Property(str, notify=outputChanged)
     def outputFolder(self) -> str:
         output = self._output_folder()
@@ -509,6 +539,14 @@ class AppController(QObject):
         return package_id_error(
             self._package_id,
             self._bundle.package_name if self._bundle else "",
+            allow_same=self._patch_only_build(),
+        )
+
+    def _patch_only_build(self) -> bool:
+        return bool(
+            self._bundle
+            and self._settings.older_firmware_patch
+            and self._package_id == self._bundle.package_name
         )
 
     @Property(str, notify=noticeChanged)
@@ -799,7 +837,19 @@ class AppController(QObject):
     @Slot()
     def openDataFolder(self) -> None:
         self._paths.data.mkdir(parents=True, exist_ok=True)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._paths.data)))
+        self._open_local_path(self._paths.data, "app data folder")
+
+    def _open_local_path(self, path: Path, label: str) -> bool:
+        if not path.exists():
+            self._set_notice(f"The {label} no longer exists.", "warning")
+            return False
+        if self._path_opener(path):
+            return True
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            return True
+        self._set_notice(f"No application is available to open the {label}.", "warning")
+        self._record_activity(f"Could not open {label}: {path}")
+        return False
 
     @Property(str, constant=True)
     def logPath(self) -> str:
@@ -817,10 +867,7 @@ class AppController(QObject):
         except OSError as exc:
             self._set_notice(f"The log file could not be opened: {exc}", "error")
             return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._paths.log_file))):
-            self._set_notice(
-                "No application is available to open the saved log file.", "warning"
-            )
+        self._open_local_path(self._paths.log_file, "saved log file")
 
     @Property(bool, notify=readinessChanged)
     def hasFailureReport(self) -> bool:
@@ -832,8 +879,7 @@ class AppController(QObject):
         if report is None or not report.is_file():
             self._set_notice("No build report is available for this failure.", "warning")
             return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(report))):
-            self._set_notice("No application is available to open the build report.", "warning")
+        self._open_local_path(report, "build report")
 
     @staticmethod
     def _report_in(folder: Path) -> Path | None:
@@ -1139,6 +1185,7 @@ class AppController(QObject):
             version_code=result.version_code,
             game_name=self._bundle.game_name or result.app_label,
             signer_identity=result.signer_identity,
+            signer_lineage=result.signer_lineage,
         )
         try:
             self._package_id = with_tag(result.package_name, "dev")
@@ -1699,7 +1746,7 @@ class AppController(QObject):
             self.readinessChanged.emit()
             return
         if self._build_result is not None:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._build_result.output_root)))
+            self._open_local_path(self._build_result.output_root, "finished folder")
             return
         if not self._can_build():
             self._set_notice(
@@ -1720,7 +1767,16 @@ class AppController(QObject):
         self._build_progress = 0.0
         self._build_message = "Preparing isolated workspace"
         self._last_failure_report = None
-        if request.replace_source:
+        patch_only = self._patch_only_build()
+        if patch_only and request.replace_source:
+            self._set_notice(
+                "Applying the patch and verifying it before replacing the source."
+            )
+        elif patch_only:
+            self._set_notice(
+                "Applying the patch in a separate copy. The source stays untouched."
+            )
+        elif request.replace_source:
             self._set_notice(
                 "Building and verifying the replacement before changing the source."
             )
@@ -1856,7 +1912,12 @@ class AppController(QObject):
                     f"Original source recovery folder: {raw_outcome.result.recovery_root}"
                 )
         else:
-            self._set_notice("Renamed copy built, signed, and verified.", "success")
+            message = (
+                "Patched copy built, signed, and verified."
+                if self._patch_only_build()
+                else "Renamed copy built, signed, and verified."
+            )
+            self._set_notice(message, "success")
         text_report = raw_outcome.result.text_report or (
             raw_outcome.result.output_root / "RENAME-REPORT.txt"
         )
@@ -1924,11 +1985,7 @@ class AppController(QObject):
             self._set_notice("The partial build folder is no longer available.", "warning")
             self.keepPartialBuild()
             return
-        opened = QDesktopServices.openUrl(QUrl.fromLocalFile(str(partial)))
-        if not opened:
-            self._set_notice(
-                "No file manager is available to open the partial build.", "warning"
-            )
+        if not self._open_local_path(partial, "partial build folder"):
             return
         self._record_activity(f"Opened and kept partial build: {partial}")
         clear_build_recovery(self._paths.build_recovery_file, partial)

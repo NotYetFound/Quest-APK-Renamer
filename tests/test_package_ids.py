@@ -21,6 +21,7 @@ class PackageIdTests(unittest.TestCase):
     def test_package_error_requires_a_separate_identity(self) -> None:
         source = "com.studio.game"
         self.assertTrue(package_id_error(source, source))
+        self.assertFalse(package_id_error(source, source, allow_same=True))
         self.assertFalse(package_id_error("com.dev.studio.game", source))
 
 

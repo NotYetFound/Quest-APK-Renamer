@@ -13,6 +13,7 @@ from quest_renamer.infrastructure.apk_build_engine import (
     StagedApkBuildEngine,
     activate_source_replacement,
 )
+from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.infrastructure.process_runner import CommandResult
 from quest_renamer.infrastructure.toolchain import Toolchain
 
@@ -119,6 +120,49 @@ class BuildEngineTests(unittest.TestCase):
             )
             self.assertFalse(any(root.glob(".finished.staging-*")))
             self.assertFalse((root / "data" / "build-recovery.json").exists())
+
+    def test_patch_only_pipeline_keeps_package_identity_and_applies_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            apk = source / "game.apk"
+            apk.write_bytes(b"original apk")
+            asset = root / "libovrplatformloader.so"
+            asset.write_bytes(b"verified fixture")
+            request = BuildRequest(
+                BundleDraft(source, apk, package_name="com.example.game"),
+                "com.example.game",
+                root / "finished",
+                patches=(PATCH_ID,),
+            )
+            engine = self._engine(root, older_firmware_asset=asset)
+
+            with patch(
+                "quest_renamer.infrastructure.apk_build_engine.apply_older_firmware_patch"
+            ) as apply_patch:
+                result = engine.build(request)
+
+            apply_patch.assert_called_once()
+            self.assertEqual(result.rewrite.changed_occurrences, 0)
+            self.assertEqual(result.rewrite.changed_files, 0)
+            self.assertEqual(result.apk.name, "com.example.game.apk")
+
+    def test_same_package_identity_is_rejected_without_a_patch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            apk = source / "game.apk"
+            apk.write_bytes(b"original apk")
+            request = BuildRequest(
+                BundleDraft(source, apk, package_name="com.example.game"),
+                "com.example.game",
+                root / "finished",
+            )
+
+            with self.assertRaisesRegex(BuildError, "patch-only"):
+                self._engine(root).build(request)
 
     def test_pipeline_replaces_source_only_after_build_and_trashes_original(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
