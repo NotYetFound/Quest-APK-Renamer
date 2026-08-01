@@ -1,0 +1,1 @@
+"""Qt-facing presentation adapters."""

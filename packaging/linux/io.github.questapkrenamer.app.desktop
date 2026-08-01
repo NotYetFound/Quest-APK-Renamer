@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Quest APK Renamer
+Comment=Build and install separate authorized Quest test bundles
+Exec=quest-apk-renamer %F
+Icon=quest-apk-renamer
+Terminal=false
+Categories=Development;
+StartupNotify=true
+Keywords=Quest;Android;APK;OBB;ADB;

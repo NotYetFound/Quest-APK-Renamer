@@ -1,250 +1,172 @@
-<p align="center">
-  <img src="assets/quest-apk-renamer.png" width="92" alt="Quest APK Renamer icon">
-</p>
+# Quest APK Renamer
 
-<h1 align="center">Quest APK Renamer</h1>
+> Current stable version: **1.4.0**.
 
-<p align="center">
-  Make a separately installable copy of a Meta Quest app by changing its
-  Android package ID. The APK, OBB files, and manifest stay together.
-</p>
+Quest APK Renamer is a guided desktop utility for creating, inspecting, and installing separate
+authorized Meta Quest APK/OBB test bundles. Version 1.4 replaces the legacy interface with the
+maintainable Qt Quick architecture described below.
 
-<p align="center">
-  <a href="#download">Download</a> ·
-  <a href="#getting-started">Getting started</a> ·
-  <a href="#troubleshooting">Troubleshooting</a> ·
-  <a href="#building-from-source">Build from source</a>
-</p>
+> This app was made 100% with AI assistance, so expect bugs, keep backups, and use it with care.
 
-<p align="center">
-  <img alt="Version 1.3.2 beta 1" src="https://img.shields.io/badge/version-1.3.2--beta.1-6f5ef7">
-  <img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-26334d">
-  <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2ea44f">
-</p>
+## Direction
 
-> [!IMPORTANT]
-> Only modify software you own or have permission to use. Renaming a package
-> does not bypass licensing, entitlement, anti-tamper, or online checks.
+- **QML / Qt Quick interface** for a responsive, polished desktop experience.
+- **Python engine** for APK inspection, rebuilding, signing, ADB, and safe file operations.
+- **Typed workflows** instead of UI methods directly running tools.
+- **Platform adapters** for Windows, macOS, and Linux behavior.
+- **Testable services** so build and install behavior can be verified without a headset.
 
-> [!WARNING]
-> This app was created entirely with AI and may contain bugs. Keep backups of
-> your original game folders and signing keys.
+The current foundation includes the neutral dashboard, bundle selection, package-ID workspace,
+separate bulk and settings pages, drag and drop, persistent cross-platform settings, bounded
+activity logs in a dedicated standalone window, and non-blocking Quest/ADB status with free-space
+reporting. The single-game
+workflow now analyzes APKs, runs automatic readiness checks, rebuilds and signs in an isolated
+staging area, renames OBB data, and publishes the finished folder atomically.
 
-![Quest APK Renamer main window](docs/screenshots/main-window.png)
+The complete build path decodes the APK, rewrites Android package references, rebuilds it,
+signs it with the persistent local identity, verifies that signature, renames OBB directories and
+filenames to the new package ID, and regenerates `release.manifest`. Each finished folder includes
+`RENAMED-BUNDLE.txt`, a readable `RENAME-REPORT.txt`, and the complete machine-readable
+`RENAME-REPORT.json` for debugging and automation.
 
-## What it does
+If the source APK has a recognized signer, the new certificate records that provenance in its
+`L=Previously signed by …` field. Recognition deliberately checks only certificate `CN` and `O`
+fields, so a rename tag or embedded lineage cannot create a false match. Each full lineage identity
+is cached and reused for future updates, and signing-key backups include every lineage key. The
+seed registry recognizes Quest APK Renamer, APC, VRP, NIF, vrSrc, Meta/Oculus, Android Debug, and
+Google identities.
 
-Pick a Quest game folder and Quest APK Renamer will:
+Finished folders can be installed from either dashboard install button. Installation always
+handles the APK and every detected OBB as one job, checks available Quest storage first, verifies
+remote OBB sizes, and confirms the installed package. Failed OBB transfers can be retried without
+reinstalling the APK. Cancellation waits for a safe file boundary. An optional cleanup setting
+moves the finished local folder to Trash only after the APK and every OBB are verified on Quest.
 
-- find its APK, OBB files, manifest, package ID, and version;
-- suggest a valid new package ID;
-- check the bundle, Android tools, and available storage;
-- rebuild, sign, and verify the renamed APK;
-- rename the OBB files and update `release.manifest`;
-- optionally replace `libovrplatformloader.so`, when present, to improve
-  compatibility with older Quest firmware;
-- create readable text and JSON reports; and
-- install and verify the finished bundle over USB.
+Source replacement is a separate opt-in output mode. The app builds the complete result in a
+sibling staging folder, verifies it, swaps it into the original folder path with automatic
+rollback, and then moves the unedited folder to the operating-system Trash. If Trash is
+unavailable, the original is kept as a visible backup instead. Source replacement and
+post-install cleanup can be enabled together: in that case, the replaced folder is removed only
+after its install succeeds and is verified.
 
-The original folder is left alone by default. Everything runs locally, and the
-release packages already include the Android tools and Java runtime they need.
+The app checks whether a package is already installed before attempting an update. Signing-key
+backups are integrity-checked, restores are activated atomically, and an existing identity is kept
+in a recovery folder when it is replaced. The optional backup reminder appears only after a signed
+build uses an identity that has not yet been backed up.
 
-The app also includes an APK inspector, bulk processing, safe cancellation,
-failed-OBB retry, signing-key backups, and a persistent activity log.
+The optional older-firmware compatibility setting has the same narrow behavior as the released
+app: when the source contains `lib/arm64-v8a/libovrplatformloader.so`, that existing ARM64 file is
+replaced with the loader from Event Horizon, then the APK is rebuilt and signed normally. The
+asset is pinned to one upstream revision and its SHA-256 is verified both before and after the
+copy. The app never inserts the loader into an APK that did not already contain it.
 
-## Download
+The Bulk page accepts several APKs or folders, can scan direct children of a parent folder, and
+previews one suffix across every package ID. Builds and installs run sequentially, one failure
+does not stop later games, cancellation occurs at safe boundaries, and the final overview keeps
+per-game success and failure details.
 
-Open the [1.3.2 beta 1 release](../../releases/tag/v1.3.2-beta.1) and download the
-package for your computer:
+The dashboard accepts either a game folder or one exact `.apk` dropped onto it. Quick ID presets
+include `.mr`, `.dev`, `.test`, and `.qa`; `.mr` inserts a mixed-reality tag after the first package
+segment (for example, `com.studio.game` becomes `com.mr.studio.game`).
 
-| Platform | File |
-| --- | --- |
-| Windows | `Quest-APK-Renamer-1.3.2-Setup.exe` |
-| Apple Silicon Mac | `Quest-APK-Renamer-1.3.2-macOS-arm64.dmg` |
-| Intel Mac | `Quest-APK-Renamer-1.3.2-macOS-x86_64.dmg` |
-| Linux x86_64 | `Quest-APK-Renamer-1.3.2-Linux-x86_64.tar.gz` |
+Device discovery handles connected, disconnected, unauthorized, offline, multiple-device,
+missing-ADB, and Linux USB-permission states without blocking the interface.
 
-On Linux, extract the archive and run `./install.sh`.
+Every Browse action uses one shared cross-platform picker chain. Windows and macOS use their
+native dialog first; Linux prefers the current desktop's own helper (`kdialog` on Plasma or
+`zenity` on GNOME-family desktops). Qt's self-rendered dialog is the next fallback, with Tk kept
+only as the final compatibility option. Cancelling a working dialog does not open another one.
 
-### Linux compatibility
+Update checks run outside the UI thread and are optional. Manual checks are available in Settings,
+new releases use a compact dismissible banner, and network failures never block APK work. The
+updater follows the repository's normal `v…` GitHub release tags and preserves the published
+ordering of the project's older out-of-sequence 1.8 and 1.9 tags.
 
-The portable x86_64 build targets glibc 2.35 or newer. That covers Ubuntu
-22.04+, Debian 12+, Fedora 36+, and current Arch/openSUSE releases. Alpine and
-other musl-based distributions are not currently supported.
+Settings shows the exact pinned Apktool and APK-signer versions and verifies their SHA-256 hashes.
+Missing or damaged JARs can be repaired automatically. Downloads run outside the UI thread, can be
+cancelled safely, and are verified before an atomic replacement; repaired tools become available
+immediately without restarting. The same verified component repair installs the pinned Event
+Horizon compatibility loader when it is missing. Java and ADB continue to use packaged copies
+first and compatible system installations as a fallback.
 
-Folder selection works on Wayland and X11. The app prefers `zenity` on GNOME,
-Xfce, Cinnamon, MATE, COSMIC, and similar desktops; prefers `kdialog` on KDE
-Plasma and LXQt; supports `yad`; and automatically falls back to its bundled
-Tk picker when a desktop helper is absent or fails. None of those external
-dialog tools are required.
+The separate Logs window follows the released app's developer-oriented model. A persistent 5 MB
+rotating session log records UTC timestamps, operation stages, exact shell-free tool commands,
+and complete Apktool, signer, and ADB output. Passwords and other supplied secret values are
+redacted. The current log can be opened directly or exported as an exact copy; review local file
+paths before sharing it. The window shows the current session without the noise from repeated app
+launches, while the saved rotating log retains every session. **Copy support info** collects the app,
+OS, Python/PySide, device and pinned-tool state plus the last 80 log lines into one readable block.
+The text build report is intended for people, while the JSON report keeps the detailed structured
+evidence needed by tools and issue reports. Failed operations offer the logs—and the relevant
+build report when one exists—directly beside the failure.
 
-If Linux detects the Quest but reports **USB permission needed**, install your
-distro's Android udev rules, reconnect the headset, and approve USB debugging.
+Build recovery also survives an app crash or forced close. Before work begins, the engine records
+the exact app-created sibling staging folder. On the next launch the app offers to open it, keep it,
+or remove it; it never treats an arbitrary folder as recoverable output. Successful builds and
+empty cancelled builds clear the record automatically.
 
-Windows builds are not currently code-signed, and macOS builds are not
-notarized, so your system may show an unknown-developer warning. GitHub shows
-a copyable SHA-256 digest beside every download so you can verify it before
-opening it.
+Settings can also remove an old finished output. This is intentionally conservative: the folder
+must contain a valid app-created JSON report naming an APK that is still present, the exact target
+is shown for confirmation, and removal means moving it to the operating system Trash rather than
+permanently deleting it.
 
-## Getting started
+The dedicated APK Inspector performs an opt-in full decode without changing the source. It shows
+resolved app/version/SDK metadata, CPU architectures, locales, components, hashes, signature
+schemes and certificates, known-signer identity, permissions/features, and an exact rename-impact
+preview. Technical package references are separated from compiled/native or other preserved data,
+embedded `Previously signed by …` lineage is shown explicitly, and the complete analysis can be
+exported atomically as JSON. Inspection is cancellable and stays
+separate from the faster automatic Dashboard analysis.
 
-1. Connect your Quest with a data-capable USB cable.
-2. Approve the USB debugging prompt inside the headset and keep it awake.
-3. Choose or drop the game's main folder into Quest APK Renamer.
-4. Accept the suggested app ID or enter your own.
-5. Wait for **Ready to build**, then select **Create renamed game**.
-6. Select **Install finished game** when the build completes.
+The interface supports keyboard navigation and visible focus states. `Ctrl+1` through `Ctrl+4`
+switch pages, `Ctrl+O` opens the game picker, and `Ctrl+L` opens the standalone log window.
+Destructive confirmations focus the safe choice by default, progress remains visible with both a
+percentage and current stage, and the restrained transitions avoid delaying work.
 
-Android sees the new package ID as a separate app. It gets its own save-data
-location and does not replace the original installation.
+The signer-lineage behavior, expanded seed registry, `.mr` preset, and single-APK drop on-ramp were
+adapted from [PR #12](https://github.com/RockoTheeHut/Quest-APK-Renamer/pull/12) by
+DeliciousMeatPop.
 
-### Expected folder layout
-
-A typical source folder looks like this:
-
-```text
-My Game/
-├── com.example.game.apk
-├── release.manifest
-└── com.example.game/
-    └── main.11868.com.example.game.obb
-```
-
-By default, the finished copy is created beside it:
-
-```text
-My Game - Renamed/
-├── com.example.gamea.apk
-├── release.manifest
-├── RENAMED-BUNDLE.txt
-├── RENAME-REPORT.txt
-├── RENAME-REPORT.json
-└── com.example.gamea/
-    └── main.11868.com.example.gamea.obb
-```
-
-## Useful tools
-
-**APK analysis** shows SDK levels, CPU architectures, permissions, components,
-hashes, signatures, certificates, and the package references that will change.
-
-**Bulk tools** can queue several folders, preview their new IDs, and build or
-install them one at a time. One failed item does not stop the rest of the queue.
-
-**Options & tools** contains less common settings, including custom output
-folders, source replacement, cleanup, Android-tool repair, signing-key backup,
-update checks, debug-log export, and an optional older-firmware compatibility
-patch. That patch is only offered when an APK contains the supported ARM64
-platform loader, stays off by default, and cannot add APIs missing from the
-headset firmware.
-
-![APK analysis and rename preview](docs/screenshots/apk-analysis.png)
-
-## Compatibility
-
-Most package references can be updated safely, but no renaming tool can support
-every app. A game may still depend on its original ID in native code, encrypted
-data, server configuration, licensing, or anti-tamper checks. In those cases it
-may install but fail to launch or connect.
-
-Quest APK Renamer reports what it changed and deliberately leaves risky
-references in compiled assets or native libraries untouched.
-
-## Keep your signing key safe
-
-The first signed build creates a local signing identity. Back up these two files
-together and keep them private:
-
-```text
-quest-renamer-signing-key.jks
-signing-key.json
-```
-
-They are stored in:
-
-| Platform | Location |
-| --- | --- |
-| Windows | `%LOCALAPPDATA%\Quest APK Renamer\` |
-| macOS | `~/Library/Application Support/Quest APK Renamer/` |
-| Linux | `~/.local/share/quest-apk-renamer/` |
-
-Android requires the same key to update an installed renamed app. If the key is
-lost, you will need to uninstall that app before installing a build signed with
-a different one.
-
-## Troubleshooting
-
-### Quest is not detected
-
-- Make sure Developer Mode and USB debugging are enabled.
-- Approve the computer inside the headset.
-- Try another data-capable USB cable or port.
-- Keep the headset awake and close other apps that may be using ADB.
-- Select the Quest status card to refresh the connection.
-
-### The app installs but cannot find its game data
-
-The OBB must be stored at:
-
-```text
-/sdcard/Android/obb/<new.package>/
-```
-
-The APK package ID, OBB folder, and package part of the OBB filename must match
-exactly. If only a transfer failed, use **Retry only the failed OBB files**.
-
-### Android reports a signature conflict
-
-Restore the signing-key backup used for that renamed package, or uninstall the
-existing renamed app before installing a build signed with a different key.
-
-### Something else went wrong
-
-Open **Activity log** first, then use **Options & tools → Open debug log** for
-more detail. The log may contain local file paths, so review it before sharing.
-
-You can also [open an issue](https://github.com/RockoTheeHut/Quest-APK-Renamer/issues/new/choose).
-Include your operating system, app version, what you selected, and the relevant
-log text. Do not upload copyrighted APKs, OBBs, or signing keys.
-
-## Building from source
-
-Run the test suite:
+## Run locally
 
 ```bash
-python3 -m unittest discover -s tests -v
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+quest-renamer
 ```
 
-Build a release package:
+On Windows, activate the environment with `.venv\Scripts\activate` instead.
 
-```powershell
-# Windows
-powershell -ExecutionPolicy Bypass -File .\windows\build.ps1 -BuildInstaller
-```
+Run the real QML shell without leaving a window open (used by packaging CI):
 
 ```bash
-# macOS
-./macos/build.sh
-
-# Linux x86_64
-./linux/build.sh
+quest-renamer --smoke-test
 ```
 
-Platform-specific instructions are in
-[windows/README.md](windows/README.md),
-[macos/README.md](macos/README.md), and
-[linux/README.md](linux/README.md). Release maintainers should also read
-[docs/RELEASING.md](docs/RELEASING.md).
+## Architecture
 
-## Privacy, security, and licenses
+```text
+src/quest_renamer/
+├── domain/          Pure models, validation, and workflow rules
+├── services/        Interfaces for build, install, device, and platform behavior
+├── infrastructure/  Filesystem and operating-system implementations
+├── presentation/    QML-facing controllers and view state
+├── qml/             The complete Qt Quick interface
+└── assets/          Application-owned visual assets
+```
 
-Game files are processed locally and are never uploaded. Source replacement is
-optional and rollback-protected, signing passwords are hidden from logs, and
-managed cleanup is limited to output created by the app. Optional update checks
-contact GitHub's public release API.
+The domain and service layers must never import Qt. The presentation layer may translate domain
+objects into properties and signals, but it does not perform APK or ADB work itself.
 
-See [SECURITY.md](SECURITY.md) for security reporting,
-[CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines, and
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for bundled component licenses.
+## Verify
 
-Quest APK Renamer is released under the [MIT License](LICENSE).
+```bash
+pytest -q
+ruff check src tests
+mypy src
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for dependency and threading rules.
+See [docs/PACKAGING.md](docs/PACKAGING.md) for portable builds, installers, macOS signing, and the
+multi-platform release workflow.

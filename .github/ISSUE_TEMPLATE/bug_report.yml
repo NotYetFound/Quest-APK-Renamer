@@ -15,6 +15,7 @@ body:
       label: App version
       description: Choose the closest match shown in the app's title bar or About screen.
       options:
+        - 1.4.0
         - 1.3.2 (beta 1)
         - 1.3.0 (beta 1)
         - 1.2.0 (beta 1 / legacy 1.9.0)
@@ -41,6 +42,26 @@ body:
     attributes:
       label: OS version or Linux distribution
       placeholder: "macOS 15.5, Fedora 44, Ubuntu 24.04, etc."
+  - type: dropdown
+    id: desktop-environment
+    attributes:
+      label: Desktop environment (Linux)
+      description: Select Other if you are not using Linux or are not sure.
+      options:
+        - GNOME
+        - KDE Plasma
+        - Xfce
+        - Cinnamon
+        - MATE
+        - LXQt
+        - Budgie
+        - COSMIC
+        - Hyprland
+        - Niri
+        - Sway / i3
+        - Other / not using Linux / not sure
+    validations:
+      required: true
   - type: input
     id: quest
     attributes:

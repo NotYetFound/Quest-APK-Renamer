@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.questapkrenamer.app</id>
+  <name>Quest APK Renamer</name>
+  <summary>Build and install separate authorized Quest test bundles</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.rockotheehut">
+    <name>RockoTheeHut</name>
+  </developer>
+  <description>
+    <p>
+      Quest APK Renamer is a guided desktop utility for inspecting, rebuilding,
+      signing, and installing authorized Meta Quest APK and OBB test bundles.
+    </p>
+  </description>
+  <url type="homepage">https://github.com/RockoTheeHut/Quest-APK-Renamer</url>
+  <launchable type="desktop-id">io.github.questapkrenamer.app.desktop</launchable>
+  <provides>
+    <binary>quest-apk-renamer</binary>
+  </provides>
+  <categories>
+    <category>Development</category>
+    <category>Utility</category>
+  </categories>
+  <content_rating type="oars-1.1"/>
+</component>

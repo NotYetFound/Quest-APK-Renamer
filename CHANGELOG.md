@@ -4,6 +4,53 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.4.0] - 2026-08-01
+
+### Added
+
+- A complete Qt Quick dashboard with dedicated Bulk, APK Inspector, Settings,
+  and standalone Logs windows.
+- Full APK package rewriting, rebuilding, persistent signing, verification,
+  OBB renaming, manifest generation, atomic publishing, and detailed reports.
+- APK inspection with signer lineage, signature schemes, certificates, SDK and
+  ABI details, hashes, components, permissions, features, and rename-impact
+  previews.
+- Sequential bulk build and install queues with per-game results and safe
+  cancellation boundaries.
+- Portable Linux tarball and AppImage packages, a Windows portable ZIP and
+  per-user installer, and native Apple Silicon and Intel macOS DMGs.
+
+### Changed
+
+- Replaced the legacy Tk interface and tightly coupled implementation with a
+  typed, testable domain/service/infrastructure architecture and a responsive
+  QML interface.
+- Unified all file browsing behind native, Qt, and desktop-helper fallback
+  layers so broken desktop portals do not silently disable Browse buttons.
+- Moved long-running analysis, building, installation, device discovery,
+  updates, and tool repair off the interface thread.
+- Reduced bundled dependencies by replacing the vendored drag-and-drop toolkit
+  with Qt's built-in support and downloading pinned Android tools at build time.
+
+### Compatibility
+
+- Reuses the released app's data directory, signing identity, Windows installer
+  identity, macOS bundle identity, and GitHub update channel.
+- Migrates an existing legacy signing key into the new PKCS#12 store after
+  validating it with Java `keytool`; the original key files are preserved.
+- Preserves the existing package/OBB workflow, older-firmware patch, source
+  replacement, verified post-install cleanup, crash recovery, and safe partial
+  cleanup behavior.
+
+### Safety
+
+- Original inputs remain untouched unless source replacement is explicitly
+  enabled, and replacement uses a verified staging folder with rollback.
+- Post-install cleanup only runs after APK and every OBB have been verified on
+  the Quest.
+- Tool downloads and the optional compatibility asset are pinned and
+  SHA-256-verified before atomic activation.
+
 ## [1.3.2] - 2026-07-31
 
 ### Changed
@@ -150,3 +197,4 @@ All notable changes to Quest APK Renamer are recorded here.
 [1.2.0]: ../../releases/tag/v1.9.0-beta.1
 [1.3.0]: ../../releases/tag/v1.3.0-beta.1
 [1.3.2]: ../../releases/tag/v1.3.2-beta.1
+[1.4.0]: ../../releases/tag/v1.4.0
