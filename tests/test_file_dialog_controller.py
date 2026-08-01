@@ -207,7 +207,10 @@ class FileDialogControllerTests(unittest.TestCase):
 
             self.assertEqual(desktop_calls, ["folder"])
             self.assertEqual(sequence.created, [])
-            self.assertEqual(received, [str(selected)])
+            self.assertEqual(
+                received,
+                [QUrl.fromLocalFile(str(selected)).toLocalFile()],
+            )
 
     def test_linux_desktop_failure_falls_back_to_qt(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -230,7 +233,10 @@ class FileDialogControllerTests(unittest.TestCase):
             controller.chooseFolder("game", "Choose", str(selected))
 
             self.assertEqual(len(sequence.created), 1)
-            self.assertEqual(received, [str(selected)])
+            self.assertEqual(
+                received,
+                [QUrl.fromLocalFile(str(selected)).toLocalFile()],
+            )
 
 
 if __name__ == "__main__":

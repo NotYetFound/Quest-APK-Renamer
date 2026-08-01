@@ -46,6 +46,26 @@ body:
     validations:
       required: true
   - type: dropdown
+    id: desktop-environment
+    attributes:
+      label: Desktop environment (Linux)
+      description: Select Other if you are not using Linux or are not sure.
+      options:
+        - GNOME
+        - KDE Plasma
+        - Xfce
+        - Cinnamon
+        - MATE
+        - LXQt
+        - Budgie
+        - COSMIC
+        - Hyprland
+        - Niri
+        - Sway / i3
+        - Other / not using Linux / not sure
+    validations:
+      required: true
+  - type: dropdown
     id: stage
     attributes:
       label: Failure stage

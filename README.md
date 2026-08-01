@@ -72,10 +72,10 @@ segment (for example, `com.studio.game` becomes `com.mr.studio.game`).
 Device discovery handles connected, disconnected, unauthorized, offline, multiple-device,
 missing-ADB, and Linux USB-permission states without blocking the interface.
 
-Every Browse action uses one shared cross-platform picker chain: the operating system's native
-dialog first, Qt's self-rendered dialog when desktop integration is broken, then the released
-app's desktop-helper/Tk approach as a last resort. Cancelling a working dialog does not open the
-next fallback.
+Every Browse action uses one shared cross-platform picker chain. Windows and macOS use their
+native dialog first; Linux prefers the current desktop's own helper (`kdialog` on Plasma or
+`zenity` on GNOME-family desktops). Qt's self-rendered dialog is the next fallback, with Tk kept
+only as the final compatibility option. Cancelling a working dialog does not open another one.
 
 Update checks run outside the UI thread and are optional. Manual checks are available in Settings,
 new releases use a compact dismissible banner, and network failures never block APK work. The

@@ -42,6 +42,26 @@ body:
     attributes:
       label: OS version or Linux distribution
       placeholder: "macOS 15.5, Fedora 44, Ubuntu 24.04, etc."
+  - type: dropdown
+    id: desktop-environment
+    attributes:
+      label: Desktop environment (Linux)
+      description: Select Other if you are not using Linux or are not sure.
+      options:
+        - GNOME
+        - KDE Plasma
+        - Xfce
+        - Cinnamon
+        - MATE
+        - LXQt
+        - Budgie
+        - COSMIC
+        - Hyprland
+        - Niri
+        - Sway / i3
+        - Other / not using Linux / not sure
+    validations:
+      required: true
   - type: input
     id: quest
     attributes:
