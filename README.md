@@ -8,8 +8,6 @@ Rename, rebuild, sign, inspect, and install authorized Meta Quest APK/OBB test b
 desktop app. Quest APK Renamer keeps the game name and in-game text unchanged while giving the
 copy a separate Android package ID.
 
-> This app was made 100% with AI assistance. Expect bugs, keep backups, and use it with care.
-
 ![Quest APK Renamer dashboard](docs/screenshots/dashboard.png)
 
 ## Download
