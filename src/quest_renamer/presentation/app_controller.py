@@ -9,7 +9,6 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -300,10 +299,6 @@ class AppController(QObject):
         if available == self._older_firmware_asset_available:
             return
         self._older_firmware_asset_available = available
-        if not available and self._settings.older_firmware_patch:
-            self._settings = self._settings.with_value("older_firmware_patch", False)
-            with suppress(OSError):
-                self._settings_store.save(self._settings)
         self.settingsChanged.emit()
         self.readinessChanged.emit()
 
@@ -503,18 +498,39 @@ class AppController(QObject):
     def _older_firmware_available(self) -> bool:
         return self._older_firmware_supported and self._older_firmware_asset_available
 
+    @Property(bool, notify=readinessChanged)
+    def olderFirmwareSupported(self) -> bool:
+        """Whether the selected APK contains the loader the patch can replace."""
+        return self._older_firmware_supported
+
+    @Property(str, notify=readinessChanged)
+    def olderFirmwareEligibility(self) -> str:
+        if self._bundle is None:
+            return "Older firmware patch compatibility is checked after selecting a source"
+        if self._analysis_state == "running":
+            return "Checking older firmware patch compatibility…"
+        if self._analysis_state == "error":
+            return "Older firmware patch compatibility could not be checked"
+        if self._older_firmware_supported:
+            if self._older_firmware_asset_available:
+                return "Older firmware patch supported — required ARM64 loader found"
+            return "Older firmware patch supported — patch asset needs repair"
+        return "Older firmware patch unsupported — compatible ARM64 loader not found"
+
     @Property(str, notify=readinessChanged)
     def olderFirmwareDetail(self) -> str:
         return self._older_firmware_detail()
 
     def _older_firmware_detail(self) -> str:
         if self._older_firmware_available():
-            return "Replace the existing Oculus loader for older Quest firmware"
+            return "Enabled only for APKs containing the compatible loader"
         if self._analysis_state == "running":
-            return "Compatibility is checked automatically"
+            return "Enabled preference; checking this APK automatically"
+        if self._bundle is None:
+            return "Applies automatically when a compatible APK is selected"
         if not self._older_firmware_supported:
-            return "This APK does not contain the compatible ARM64 loader"
-        return "The verified compatibility asset is not installed"
+            return "Skipped for this APK because its compatible loader is absent"
+        return "Compatible APK found; repair tools to install the patch asset"
 
     @Property(str, notify=packageIdChanged)
     def packageId(self) -> str:
@@ -546,6 +562,7 @@ class AppController(QObject):
         return bool(
             self._bundle
             and self._settings.older_firmware_patch
+            and self._older_firmware_available()
             and self._package_id == self._bundle.package_name
         )
 
@@ -762,9 +779,6 @@ class AppController(QObject):
         if name == "replace_source_after_build":
             self.requestReplaceSource(value)
             return
-        if name == "older_firmware_patch" and value and not self._older_firmware_available():
-            self._set_notice(self._older_firmware_detail(), "warning")
-            return
         try:
             updated = self._settings.with_value(name, value)
         except (KeyError, TypeError):
@@ -782,6 +796,23 @@ class AppController(QObject):
         self.settingsChanged.emit()
         self._refresh_preflight()
         self._record_activity(f"Setting changed: {name} = {value}")
+        if name == "older_firmware_patch" and value:
+            if self._older_firmware_available():
+                self._set_notice("Older firmware patch enabled for this APK.")
+            elif self._bundle is None or self._analysis_state == "running":
+                self._set_notice(
+                    "Older firmware patch enabled. It will apply only to compatible APKs."
+                )
+            elif not self._older_firmware_supported:
+                self._set_notice(
+                    "Older firmware patch enabled, but this APK is not compatible, so it "
+                    "will be skipped."
+                )
+            else:
+                self._set_notice(
+                    "This APK is compatible, but the verified patch asset needs repair.",
+                    "warning",
+                )
 
     @Slot(bool)
     def requestReplaceSource(self, value: bool) -> None:
@@ -1064,11 +1095,6 @@ class AppController(QObject):
         self._build_state = "idle"
         self._output_parent = bundle.root.parent
         self._older_firmware_supported = False
-        if self._settings.older_firmware_patch:
-            self._settings = self._settings.with_value("older_firmware_patch", False)
-            with suppress(OSError):
-                self._settings_store.save(self._settings)
-            self.settingsChanged.emit()
         if bundle.package_name:
             try:
                 self._package_id = with_tag(bundle.package_name, "dev")
@@ -1229,7 +1255,9 @@ class AppController(QObject):
             output_root=output,
             copy_obbs=self._settings.copy_obbs,
             sign_apk=self._settings.sign_apks,
-            patches=(PATCH_ID,) if self._settings.older_firmware_patch else (),
+            patches=(PATCH_ID,)
+            if self._settings.older_firmware_patch and self._older_firmware_available()
+            else (),
             replace_source=self._settings.replace_source_after_build,
         )
 

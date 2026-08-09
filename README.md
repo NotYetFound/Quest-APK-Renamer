@@ -19,7 +19,7 @@ Get the current stable build from the
 
 | Platform | Recommended download | Alternative |
 | --- | --- | --- |
-| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.0-Setup.exe` | Portable ZIP |
+| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.2-Setup.exe` | Portable ZIP |
 | Linux x86_64 | AppImage | Portable tarball with launcher installer |
 | Apple Silicon macOS | `macOS-arm64.dmg` | — |
 | Intel macOS | `macOS-x86_64.dmg` | — |

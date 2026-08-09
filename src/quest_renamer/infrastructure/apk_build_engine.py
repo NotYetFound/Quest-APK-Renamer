@@ -43,6 +43,16 @@ ProgressCallback = Callable[[float, str], None]
 LogCallback = Callable[[str], None]
 
 
+def _format_bytes(value: int) -> str:
+    amount = float(max(0, value))
+    units = ("B", "KB", "MB", "GB", "TB")
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            return f"{amount:.0f} {unit}" if unit == "B" else f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{amount:.1f} TB"
+
+
 def _unique_recovery_path(source: Path, label: str = "Original Backup") -> Path:
     base = source.parent / f"{source.name} — {label}"
     if not base.exists():
@@ -231,6 +241,7 @@ class StagedApkBuildEngine:
                             "Android files."
                         )
                 if PATCH_ID in request.patches:
+                    progress(0.34, "Applying older-firmware compatibility patch")
                     apply_older_firmware_patch(
                         decoded,
                         self.older_firmware_asset,
@@ -327,7 +338,15 @@ class StagedApkBuildEngine:
 
                 progress(0.83, "Saving APK")
                 apk_output = staging / f"{request.package_name}.apk"
-                copy_file(built_apk, apk_output, token=token)
+
+                def report_apk_copy(copied: int, total: int) -> None:
+                    fraction = copied / total if total else 1.0
+                    progress(
+                        0.83 + fraction * 0.02,
+                        f"Saving APK • {_format_bytes(copied)} of {_format_bytes(total)}",
+                    )
+
+                copy_file(built_apk, apk_output, token=token, progress=report_apk_copy)
 
                 obb_outputs: list[Path] = []
                 if request.copy_obbs and request.source.obbs:
@@ -348,7 +367,9 @@ class StagedApkBuildEngine:
                             )
                             progress(
                                 0.85 + fraction * 0.10,
-                                f"Copying OBB {item_index} of {len(request.source.obbs)}",
+                                f"Copying OBB {item_index} of {len(request.source.obbs)} • "
+                                f"{_format_bytes(base_bytes + copied)} of "
+                                f"{_format_bytes(total_bytes)}",
                             )
 
                         copy_file(

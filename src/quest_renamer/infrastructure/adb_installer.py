@@ -154,7 +154,15 @@ class AdbApkInstaller:
             token.raise_if_cancelled()
             remote_path = f"{remote_root}/{obb.name}"
             start = progress_start + ((index - 1) / len(bundle.obbs)) * progress_span
-            progress(start, f"Copying OBB {index} of {len(bundle.obbs)}")
+            size = obb.stat().st_size
+            progress(
+                start,
+                f"Copying OBB {index} of {len(bundle.obbs)} • {obb.name} • "
+                f"{size / (1024 ** 3):.2f} GB"
+                if size >= 1024**3
+                else f"Copying OBB {index} of {len(bundle.obbs)} • {obb.name} • "
+                f"{size / (1024 ** 2):.1f} MB",
+            )
             try:
                 self.runner.run(
                     (*target, "push", obb, remote_path),

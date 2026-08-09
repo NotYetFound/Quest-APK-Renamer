@@ -19,6 +19,7 @@ from quest_renamer.domain.models import BundleDraft, DeviceSnapshot
 from quest_renamer.domain.signers import SignerIdentity
 from quest_renamer.infrastructure.app_paths import AppPaths
 from quest_renamer.infrastructure.build_recovery import write_build_recovery
+from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
 from quest_renamer.infrastructure.signing_backup import SigningIdentityManager
 from quest_renamer.main import (
@@ -366,8 +367,67 @@ class ControllerTests(unittest.TestCase):
 
             self.assertTrue(controller.canBuild)
             self.assertEqual(controller.buildActionLabel, "Apply firmware patch")
+            self.assertTrue(controller.olderFirmwareSupported)
+            self.assertIn("supported", controller.olderFirmwareEligibility.lower())
+            request = controller._build_request()
+            self.assertIsNotNone(request)
+            self.assertEqual(request.patches, (PATCH_ID,))  # type: ignore[union-attr]
             self.assertIn("NothingIsFree", controller.signerLineage)
             self.assertIn("Previously signed by Meta", controller.signerLineage)
+
+    def test_older_firmware_preference_stays_enabled_and_skips_incompatible_apk(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            controller = AppController(
+                analyzer=ImmediateAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=object(),  # type: ignore[arg-type]
+                older_firmware_asset_available=True,
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+
+            controller.setSetting("older_firmware_patch", True)
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.sourcePackage == "com.example.game")
+
+            self.assertTrue(controller.settings["olderFirmwarePatch"])
+            self.assertFalse(controller.olderFirmwareSupported)
+            self.assertIn("unsupported", controller.olderFirmwareEligibility.lower())
+            request = controller._build_request()
+            self.assertIsNotNone(request)
+            self.assertEqual(request.patches, ())  # type: ignore[union-attr]
+
+    def test_older_firmware_preference_survives_a_missing_patch_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            controller = AppController(
+                analyzer=LineageAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=object(),  # type: ignore[arg-type]
+                older_firmware_asset_available=False,
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+
+            controller.setSetting("older_firmware_patch", True)
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.sourcePackage == "com.example.game")
+            controller.set_older_firmware_asset_available(False)
+
+            self.assertTrue(controller.settings["olderFirmwarePatch"])
+            self.assertTrue(controller.olderFirmwareSupported)
+            self.assertFalse(controller.olderFirmwareAvailable)
+            self.assertIn("needs repair", controller.olderFirmwareEligibility.lower())
+            request = controller._build_request()
+            self.assertIsNotNone(request)
+            self.assertEqual(request.patches, ())  # type: ignore[union-attr]
 
     def test_finished_build_uses_cross_desktop_path_opener(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

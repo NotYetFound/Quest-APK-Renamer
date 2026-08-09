@@ -4,6 +4,22 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.4.2] - 2026-08-08
+
+### Added
+
+- A compact source-card OFP compatibility indicator with an explanatory hover
+  tooltip.
+- More informative operation progress with the active target, exact percentage,
+  OFP stage, and byte-level APK/OBB copy details.
+
+### Changed
+
+- The older-firmware patch preference can now be enabled before or after source
+  selection and stays enabled across games. It is applied only when analysis
+  confirms the compatible ARM64 loader is present; other APKs are left unpatched.
+- Moved the rename arrows upward toward the center of the application icon.
+
 ## [1.4.0] - 2026-08-01
 
 ### Added
@@ -197,4 +213,5 @@ All notable changes to Quest APK Renamer are recorded here.
 [1.2.0]: ../../releases/tag/v1.9.0-beta.1
 [1.3.0]: ../../releases/tag/v1.3.0-beta.1
 [1.3.2]: ../../releases/tag/v1.3.2-beta.1
+[1.4.2]: ../../releases/tag/v1.4.2
 [1.4.0]: ../../releases/tag/v1.4.0

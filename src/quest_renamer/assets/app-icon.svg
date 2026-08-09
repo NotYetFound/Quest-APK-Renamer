@@ -10,6 +10,8 @@
   <path d="m102 72 62 31v22" fill="none" stroke="#667d8f" stroke-width="8" stroke-linejoin="round"/>
 
   <!-- Opposing arrows communicate changing identity without changing content. -->
-  <path d="M55 173h48l-13-13" fill="none" stroke="#40b7a4" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M201 173h-48l13 13" fill="none" stroke="#40b7a4" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <g transform="translate(0 -22)">
+    <path d="M55 173h48l-13-13" fill="none" stroke="#40b7a4" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M201 173h-48l13 13" fill="none" stroke="#40b7a4" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>

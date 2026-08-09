@@ -555,15 +555,50 @@ ApplicationWindow {
                                             )
                                         }
                                     }
-                                    Text {
+                                    Item {
                                         Layout.fillWidth: true
-                                        text: appController.hasBundle
-                                              ? appController.apkName + "  •  " + appController.obbSummary + "  •  " + appController.bundleSize
-                                                + (appController.versionSummary ? "  •  " + appController.versionSummary : "")
-                                              : "Paste a path, browse, or drop one APK or game folder here."
-                                        color: appController.hasBundle ? window.textSecondary : "#777777"
-                                        font.pixelSize: 10
-                                        elide: Text.ElideRight
+                                        Layout.preferredHeight: 16
+                                        Text {
+                                            id: sourceSummary
+                                            anchors.left: parent.left
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            width: Math.min(
+                                                       implicitWidth,
+                                                       parent.width - (ofpSourceStatus.visible ? 24 : 0)
+                                                   )
+                                            text: appController.hasBundle
+                                                  ? appController.apkName + "  •  " + appController.obbSummary + "  •  " + appController.bundleSize
+                                                    + (appController.versionSummary ? "  •  " + appController.versionSummary : "")
+                                                  : "Paste a path, browse, or drop one APK or game folder here."
+                                            color: appController.hasBundle ? window.textSecondary : "#777777"
+                                            font.pixelSize: 10
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            id: ofpSourceStatus
+                                            visible: appController.hasBundle
+                                            anchors.left: sourceSummary.right
+                                            anchors.leftMargin: 7
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            text: appController.isAnalyzing ? "…"
+                                                  : appController.olderFirmwareSupported ? "✓"
+                                                  : "×"
+                                            color: appController.olderFirmwareSupported ? "#70b18f"
+                                                   : "#686868"
+                                            font.pixelSize: 12
+                                            font.weight: Font.DemiBold
+                                            Accessible.name: appController.olderFirmwareEligibility
+                                            ToolTip.visible: ofpStatusMouse.containsMouse
+                                            ToolTip.text: appController.olderFirmwareEligibility
+                                            ToolTip.delay: 300
+                                            MouseArea {
+                                                id: ofpStatusMouse
+                                                anchors.fill: parent
+                                                anchors.margins: -5
+                                                hoverEnabled: true
+                                                acceptedButtons: Qt.NoButton
+                                            }
+                                        }
                                     }
                                 }
 
@@ -755,7 +790,7 @@ ApplicationWindow {
                                         SettingRow {
                                             Layout.fillWidth: true
                                             compact: true
-                                            enabled: appController.olderFirmwareAvailable && !appController.isBusy
+                                            enabled: true
                                             title: "Older firmware patch"
                                             detail: appController.olderFirmwareDetail
                                             checked: appController.settings.olderFirmwarePatch
@@ -784,6 +819,7 @@ ApplicationWindow {
                             }
 
                             Rectangle {
+                                id: operationPanel
                                 property bool operationActive: appController.isAnalyzing
                                                                || appController.isBuilding
                                                                || appController.isInstalling
@@ -792,8 +828,13 @@ ApplicationWindow {
                                                                  : appController.isBuilding
                                                                  ? appController.buildProgress
                                                                  : appController.analysisProgress
+                                property string operationDetail: appController.isInstalling
+                                                                  ? "Quest install  •  " + appController.deviceTitle
+                                                                  : appController.isBuilding
+                                                                  ? "Build output  •  " + appController.packageId
+                                                                  : "APK analysis  •  " + appController.apkName
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: operationActive ? 68 : 54
+                                Layout.preferredHeight: operationActive ? 82 : 54
                                 radius: 3
                                 color: window.panel
                                 border.width: 1
@@ -802,6 +843,7 @@ ApplicationWindow {
                                     anchors.fill: parent
                                     anchors.leftMargin: 15
                                     anchors.rightMargin: 8
+                                    anchors.bottomMargin: operationPanel.operationActive ? 16 : 0
                                     spacing: 10
                                     Rectangle {
                                         Layout.preferredWidth: 8
@@ -822,22 +864,36 @@ ApplicationWindow {
                                         Layout.preferredHeight: 20
                                         Accessible.name: "Operation in progress"
                                     }
-                                    Text {
-                                        text: appController.isInstalling
-                                              ? appController.installLabel
-                                              : appController.isBuilding
-                                              ? appController.buildLabel
-                                              : appController.isAnalyzing
-                                              ? appController.analysisLabel
-                                              : appController.notice
-                                        color: "#c7c7c7"
-                                        font.pixelSize: 11
+                                    ColumnLayout {
                                         Layout.fillWidth: true
-                                        elide: Text.ElideRight
+                                        spacing: 2
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: appController.isInstalling
+                                                  ? appController.installLabel
+                                                  : appController.isBuilding
+                                                  ? appController.buildLabel
+                                                  : appController.isAnalyzing
+                                                  ? appController.analysisLabel
+                                                  : appController.notice
+                                            color: "#c7c7c7"
+                                            font.pixelSize: 11
+                                            font.weight: operationPanel.operationActive
+                                                         ? Font.Medium : Font.Normal
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            visible: operationPanel.operationActive
+                                            text: operationPanel.operationDetail
+                                            color: "#7f8a92"
+                                            font.pixelSize: 9
+                                            elide: Text.ElideMiddle
+                                        }
                                     }
                                     Text {
-                                        visible: parent.parent.operationActive
-                                        text: Math.round(parent.parent.operationProgress * 100) + "%"
+                                        visible: operationPanel.operationActive
+                                        text: Math.round(operationPanel.operationProgress * 100) + "%"
                                         color: "#d8d8d8"
                                         font.pixelSize: 11
                                         font.weight: Font.DemiBold
@@ -877,20 +933,22 @@ ApplicationWindow {
                                     }
                                 }
                                 Rectangle {
-                                    visible: parent.operationActive
+                                    visible: operationPanel.operationActive
                                     anchors.left: parent.left
                                     anchors.right: parent.right
                                     anchors.bottom: parent.bottom
                                     anchors.leftMargin: 15
                                     anchors.rightMargin: 15
                                     anchors.bottomMargin: 8
-                                    height: 6
-                                    radius: 3
+                                    height: 8
+                                    radius: 4
                                     color: "#303030"
                                     Rectangle {
-                                        width: parent.width * parent.parent.operationProgress
+                                        width: parent.width * Math.max(
+                                                   0, Math.min(1, operationPanel.operationProgress)
+                                               )
                                         height: parent.height
-                                        radius: 3
+                                        radius: 4
                                         color: window.accent
                                         Behavior on width { NumberAnimation { duration: 120 } }
                                     }

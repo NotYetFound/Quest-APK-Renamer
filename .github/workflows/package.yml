@@ -163,6 +163,12 @@ jobs:
           args=(release create "$GITHUB_REF_NAME" --title "Quest APK Renamer $version")
           suffix="${GITHUB_REF_NAME#$expected}"
           [[ -z "$suffix" ]] || args+=(--prerelease)
+          notes="docs/releases/v$version.md"
+          if [[ -f "$notes" ]]; then
+              args+=(--notes-file "$notes")
+          else
+              args+=(--generate-notes)
+          fi
           mapfile -d '' assets < <(find artifacts -type f ! -name '*.sha256' -print0)
           ((${#assets[@]} > 0)) || { echo "No release files were downloaded." >&2; exit 1; }
-          gh "${args[@]}" --generate-notes "${assets[@]}"
+          gh "${args[@]}" "${assets[@]}"
