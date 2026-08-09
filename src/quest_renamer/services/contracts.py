@@ -97,6 +97,8 @@ class BundleInstaller(Protocol):
 
 
 class SigningManager(Protocol):
+    root: Path
+
     def state(self) -> SigningState: ...
 
     def backup_to(

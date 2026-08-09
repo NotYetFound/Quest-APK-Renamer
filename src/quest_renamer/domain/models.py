@@ -28,6 +28,7 @@ class BundleDraft:
     version_code: str = ""
     signer_identity: SignerIdentity | None = None
     signer_lineage: str = ""
+    managed_obb_names: tuple[str, ...] = ()
 
     @property
     def total_size(self) -> int:
@@ -52,6 +53,8 @@ class BuildRequest:
     sign_apk: bool = True
     patches: tuple[str, ...] = field(default_factory=tuple)
     replace_source: bool = False
+    signing_keystore: Path | None = None
+    signing_metadata: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

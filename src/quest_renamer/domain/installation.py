@@ -11,6 +11,7 @@ class InstalledObb:
     source: Path
     remote_path: str
     size: int
+    action: str = "uploaded"
 
 
 @dataclass(frozen=True, slots=True)

@@ -52,6 +52,7 @@ from quest_renamer.infrastructure.managed_outputs import (
 )
 from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
+from quest_renamer.presentation.library_controller import LibraryController
 from quest_renamer.services.contracts import (
     ApkAnalyzer,
     BuildEngine,
@@ -138,8 +139,10 @@ class AppController(QObject):
     sourceCleanupReady = Signal(object)
     oldOutputCleanupReady = Signal(object)
     outputCleanupConfirmationRequested = Signal(str, str, str)
+    outputConflictRequested = Signal(str, str)
     packageConflictRequested = Signal(str)
     signingBackupReminderRequested = Signal()
+    signingBackupCompletedRequested = Signal(str)
     signingRestoreConfirmationRequested = Signal(str)
     replaceSourceConfirmationRequested = Signal()
     signingOutcomeReady = Signal(object)
@@ -164,6 +167,7 @@ class AppController(QObject):
         move_to_trash: Callable[[Path], None] | None = None,
         path_opener: Callable[[Path], bool] | None = None,
         support_tool_summary: str = "Not reported",
+        library_controller: LibraryController | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
@@ -181,6 +185,7 @@ class AppController(QObject):
         self._move_to_trash = move_to_trash
         self._path_opener = path_opener or open_local_path
         self._support_tool_summary = support_tool_summary
+        self._library_controller = library_controller
         self._external_busy_provider: Callable[[], bool] = lambda: False
         self._settings = self._settings_store.load()
         self._bundle: BundleDraft | None = None
@@ -197,6 +202,7 @@ class AppController(QObject):
         self._build_progress = 0.0
         self._build_message = ""
         self._build_token: CancellationToken | None = None
+        self._active_build_request: BuildRequest | None = None
         self._build_generation = 0
         self._build_started_at = 0.0
         self._build_log_step = ""
@@ -205,6 +211,8 @@ class AppController(QObject):
         self._partial_output: Path | None = recovery.staging if recovery else None
         self._last_failure_report: Path | None = None
         self._output_parent: Path | None = None
+        self._output_override: Path | None = None
+        self._pending_output_conflict: Path | None = None
         self._older_firmware_supported = False
         self._install_state = "idle"
         self._install_progress = 0.0
@@ -215,7 +223,10 @@ class AppController(QObject):
         self._install_log_step = ""
         self._retry_bundle: BundleDraft | None = None
         self._pending_conflict_bundle: BundleDraft | None = None
+        self._pending_library_profile_id = ""
+        self._matched_library_profile_id = ""
         self._pending_restore: Path | None = None
+        self._automatic_signing_backup = False
         self._pending_old_output: ManagedOutput | None = None
         self._old_output_cleanup_busy = False
         self._signing_busy = False
@@ -268,9 +279,20 @@ class AppController(QObject):
             return False
         if self._bundle is None or self._package_error():
             return False
+        if self._library_identity_error():
+            return False
         if self._analyzer is not None and self._analysis_state != "ready":
             return False
-        return self._preflight is None or self._preflight.ready
+        if self._preflight is None or self._preflight.ready:
+            return True
+        failures = self._preflight.failures
+        return bool(
+            self._output_conflict()
+            and len(failures) == 1
+            and failures[0].key == "output"
+            and failures[0].detail
+            == "The output folder already exists and is not empty."
+        )
 
     @Property(bool, notify=readinessChanged)
     def isBuilding(self) -> bool:
@@ -477,6 +499,18 @@ class AppController(QObject):
             return f"Current: {signer}  •  {self._bundle.signer_lineage}"
         return f"Current: {signer}"
 
+    @Property(str, notify=bundleChanged)
+    def libraryMatch(self) -> str:
+        if self._library_controller is None or not self._matched_library_profile_id:
+            return ""
+        profile = self._library_controller.profile(self._matched_library_profile_id)
+        if profile is None:
+            return ""
+        version = profile.installed_version or profile.source_version
+        if self._bundle and self._bundle.version_code and version:
+            return f"Library update  •  {version} → {self._bundle.version_code}"
+        return "Library identity restored automatically"
+
     @Property(str, notify=outputChanged)
     def outputFolder(self) -> str:
         output = self._output_folder()
@@ -487,9 +521,30 @@ class AppController(QObject):
             return None
         if self._settings.replace_source_after_build:
             return self._bundle.root
+        if self._output_override is not None:
+            return self._output_override
         name = default_output_folder(self._bundle.root).name
         parent = self._output_parent or self._bundle.root.parent
         return parent / name
+
+    def _output_conflict(self) -> Path | None:
+        output = self._output_folder()
+        if output is None or self._settings.replace_source_after_build or not output.exists():
+            return None
+        try:
+            occupied = not output.is_dir() or any(output.iterdir())
+        except OSError:
+            occupied = True
+        return output if occupied else None
+
+    @staticmethod
+    def _numbered_output(output: Path) -> Path:
+        number = 2
+        while True:
+            candidate = output.with_name(f"{output.name} ({number})")
+            if not candidate.exists():
+                return candidate
+            number += 1
 
     @Property(bool, notify=readinessChanged)
     def olderFirmwareAvailable(self) -> bool:
@@ -544,6 +599,11 @@ class AppController(QObject):
         if value == self._package_id:
             return
         self._package_id = value
+        if self._matched_library_profile_id and self._library_controller is not None:
+            profile = self._library_controller.profile(self._matched_library_profile_id)
+            if profile is None or profile.target_package != value:
+                self._matched_library_profile_id = ""
+                self.bundleChanged.emit()
         self.packageIdChanged.emit()
         self._refresh_preflight()
 
@@ -557,6 +617,32 @@ class AppController(QObject):
             self._bundle.package_name if self._bundle else "",
             allow_same=self._patch_only_build(),
         )
+
+    def _library_identity_error(self) -> str:
+        if self._library_controller is None or not self._matched_library_profile_id:
+            return ""
+        profile = self._library_controller.profile(self._matched_library_profile_id)
+        if profile is None or profile.target_package != self._package_id:
+            return ""
+        if profile.installed_version and not self._settings.sign_apks:
+            return "Enable APK signing to update this installed Library game."
+        if (
+            self._bundle is not None
+            and profile.installed_version.isdigit()
+            and self._bundle.version_code.isdigit()
+            and int(self._bundle.version_code) < int(profile.installed_version)
+        ):
+            return (
+                f"Version {self._bundle.version_code} is older than the installed Library "
+                f"version {profile.installed_version}."
+            )
+        if profile.installed_version and not (
+            profile.signing_keystore and profile.signing_metadata
+        ):
+            return "This Library entry has no saved signing key, so it cannot be updated."
+        if profile.signing_keystore and profile.signing_metadata and not profile.key_available:
+            return "The saved signing key is missing or changed. Restore it before updating."
+        return ""
 
     def _patch_only_build(self) -> bool:
         return bool(
@@ -629,6 +715,7 @@ class AppController(QObject):
             "automaticPreflight": self._settings.automatic_preflight,
             "checkUpdates": self._settings.check_updates,
             "keyBackupReminder": self._settings.key_backup_reminder,
+            "keyBackupFolder": self._settings.key_backup_folder,
             "dismissedUpdate": self._settings.dismissed_update,
         }
 
@@ -796,23 +883,56 @@ class AppController(QObject):
         self.settingsChanged.emit()
         self._refresh_preflight()
         self._record_activity(f"Setting changed: {name} = {value}")
-        if name == "older_firmware_patch" and value:
-            if self._older_firmware_available():
-                self._set_notice("Older firmware patch enabled for this APK.")
-            elif self._bundle is None or self._analysis_state == "running":
+
+    @Slot(QUrl)
+    def setDefaultKeyBackupFolder(self, url: QUrl) -> None:
+        local = url.toLocalFile() if url.isLocalFile() else url.toString()
+        if not local:
+            return
+        folder = Path(local).expanduser().resolve()
+        if not folder.is_dir():
+            self._set_notice("Choose an existing folder for automatic key backups.", "error")
+            return
+        if self._signing_manager is not None:
+            signing_root = self._signing_manager.root.resolve()
+            if folder == signing_root or signing_root in folder.parents:
                 self._set_notice(
-                    "Older firmware patch enabled. It will apply only to compatible APKs."
+                    "Choose a backup folder outside the app's live signing folder.",
+                    "error",
                 )
-            elif not self._older_firmware_supported:
-                self._set_notice(
-                    "Older firmware patch enabled, but this APK is not compatible, so it "
-                    "will be skipped."
+                return
+        updated = self._settings.with_value("key_backup_folder", str(folder))
+        try:
+            self._settings_store.save(updated)
+        except OSError as exc:
+            self._set_notice(f"Settings could not be saved: {exc}", "error")
+            return
+        self._settings = updated
+        self.settingsChanged.emit()
+        self._set_notice("Automatic signing-key backup location saved.", "success")
+        self._record_activity(f"Automatic signing-key backup folder set: {folder}")
+        if self._signing_manager is not None:
+            state = self._signing_manager.state()
+            if state.complete:
+                self._start_signing_operation(
+                    "backup",
+                    folder,
+                    replace_existing=False,
+                    automatic=True,
                 )
-            else:
-                self._set_notice(
-                    "This APK is compatible, but the verified patch asset needs repair.",
-                    "warning",
-                )
+
+    @Slot()
+    def clearDefaultKeyBackupFolder(self) -> None:
+        updated = self._settings.with_value("key_backup_folder", "")
+        try:
+            self._settings_store.save(updated)
+        except OSError as exc:
+            self._set_notice(f"Settings could not be saved: {exc}", "error")
+            return
+        self._settings = updated
+        self.settingsChanged.emit()
+        self._set_notice("Automatic signing-key backup location cleared.")
+        self._record_activity("Automatic signing-key backup folder cleared.")
 
     @Slot(bool)
     def requestReplaceSource(self, value: bool) -> None:
@@ -851,6 +971,8 @@ class AppController(QObject):
         self._build_result = None
         self._build_state = "idle"
         self._build_progress = 0.0
+        self._output_override = None
+        self._pending_output_conflict = None
         self.settingsChanged.emit()
         self.outputChanged.emit()
         self.readinessChanged.emit()
@@ -869,6 +991,14 @@ class AppController(QObject):
     def openDataFolder(self) -> None:
         self._paths.data.mkdir(parents=True, exist_ok=True)
         self._open_local_path(self._paths.data, "app data folder")
+
+    @Slot(str)
+    def openKeyBackupFolder(self, path: str) -> None:
+        folder = Path(path).expanduser()
+        if folder.is_dir():
+            self._open_local_path(folder, "signing-key backup folder")
+            return
+        self._set_notice("That signing-key backup folder is no longer available.", "warning")
 
     def _open_local_path(self, path: Path, label: str) -> bool:
         if not path.exists():
@@ -1043,6 +1173,28 @@ class AppController(QObject):
         if value:
             self.chooseFolder(QUrl.fromLocalFile(value))
 
+    @Slot(str)
+    def prepareLibraryUpdate(self, profile_id: str) -> None:
+        if self._library_controller is None:
+            return
+        profile = self._library_controller.profile(profile_id)
+        if profile is None:
+            self._set_notice("That Library entry is no longer available.", "warning")
+            return
+        self._pending_library_profile_id = profile.id
+        self._library_controller.select(profile.id)
+
+    @Slot(QUrl)
+    def chooseLibraryUpdate(self, url: QUrl) -> None:
+        if not self._pending_library_profile_id:
+            self._set_notice("Choose a game from the Library first.", "warning")
+            return
+        self.chooseFolder(url)
+
+    @Slot()
+    def cancelLibraryUpdateSelection(self) -> None:
+        self._pending_library_profile_id = ""
+
     @Slot(QUrl)
     def chooseOutputParent(self, url: QUrl) -> None:
         if self._bundle is None or self._build_state == "running":
@@ -1061,6 +1213,8 @@ class AppController(QObject):
             self._set_notice("Choose an existing folder to save the renamed copy in.", "error")
             return
         self._output_parent = parent
+        self._output_override = None
+        self._pending_output_conflict = None
         self._build_result = None
         self._build_state = "idle"
         self.outputChanged.emit()
@@ -1094,7 +1248,10 @@ class AppController(QObject):
         self._build_result = None
         self._build_state = "idle"
         self._output_parent = bundle.root.parent
+        self._output_override = None
+        self._pending_output_conflict = None
         self._older_firmware_supported = False
+        self._matched_library_profile_id = ""
         if bundle.package_name:
             try:
                 self._package_id = with_tag(bundle.package_name, "dev")
@@ -1119,8 +1276,10 @@ class AppController(QObject):
         )
         if self._analyzer is None:
             self._analysis_state = "ready"
-            self._refresh_preflight()
-            self._set_notice("Bundle found. Nothing has been changed.", "success")
+            library_handled = self._restore_library_identity(bundle.package_name)
+            self._refresh_preflight(preserve_notice=library_handled)
+            if not library_handled:
+                self._set_notice("Bundle found. Nothing has been changed.", "success")
         else:
             self._begin_analysis(bundle)
 
@@ -1217,6 +1376,7 @@ class AppController(QObject):
             self._package_id = with_tag(result.package_name, "dev")
         except ValueError:
             self._package_id = ""
+        library_handled = self._restore_library_identity(result.package_name)
         self._analysis_state = "ready"
         self._analysis_progress = 1.0
         self._analysis_message = "APK checked"
@@ -1243,12 +1403,100 @@ class AppController(QObject):
                 ),
             ),
         )
-        self._refresh_preflight()
+        self._refresh_preflight(preserve_notice=library_handled)
+
+    def _restore_library_identity(self, original_package: str) -> bool:
+        library = self._library_controller
+        if library is None or not original_package:
+            self._pending_library_profile_id = ""
+            return False
+        requested = library.profile(self._pending_library_profile_id)
+        self._pending_library_profile_id = ""
+        if requested is not None and requested.original_package != original_package:
+            self._matched_library_profile_id = ""
+            self._set_notice(
+                "That update belongs to a different game, so the saved identity was not used.",
+                "error",
+            )
+            self._record_event(
+                "LIBRARY",
+                "Update source did not match the selected game",
+                (
+                    ("Expected", requested.original_package),
+                    ("Selected", original_package),
+                ),
+            )
+            return True
+        profile = requested or library.unique_profile_for_source(original_package)
+        if profile is None:
+            return False
+        current_signer = (
+            self._bundle.signer_identity.id
+            if self._bundle is not None and self._bundle.signer_identity is not None
+            else ""
+        )
+        if profile.source_signer_id not in {"", "unknown"} and current_signer not in {
+            "",
+            "unknown",
+            profile.source_signer_id,
+        }:
+            self._matched_library_profile_id = ""
+            self._set_notice(
+                "The update package uses a different original signer, so the saved "
+                "identity was not used.",
+                "error",
+            )
+            self._record_event(
+                "LIBRARY",
+                "Update signer did not match the saved game",
+                (
+                    ("Expected signer", profile.source_signer_id),
+                    ("Selected signer", current_signer),
+                ),
+            )
+            return True
+        self._matched_library_profile_id = profile.id
+        self._package_id = profile.target_package
+        if profile.output_path and not self._settings.replace_source_after_build:
+            self._output_parent = Path(profile.output_path).expanduser().parent
+            self._output_override = None
+        library.select(profile.id)
+        current = self._bundle.version_code if self._bundle else ""
+        previous = profile.installed_version or profile.source_version
+        detail = f" {previous} → {current}." if previous and current else "."
+        self._set_notice(
+            "Library match found; the saved app ID and signing identity will be reused"
+            + detail,
+            "success",
+        )
+        self._record_event(
+            "LIBRARY",
+            "Saved game identity restored",
+            (
+                ("Game", profile.game_name),
+                ("Original package", profile.original_package),
+                ("Renamed package", profile.target_package),
+                ("Saved version", previous or "Not reported"),
+                ("Selected version", current or "Not reported"),
+            ),
+        )
+        return True
 
     def _build_request(self) -> BuildRequest | None:
         output = self._output_folder()
         if self._bundle is None or output is None:
             return None
+        signing_keystore: Path | None = None
+        signing_metadata: Path | None = None
+        if self._library_controller is not None and self._matched_library_profile_id:
+            profile = self._library_controller.profile(self._matched_library_profile_id)
+            if profile is not None and profile.target_package == self._package_id:
+                signing_keystore = (
+                    Path(profile.signing_keystore) if profile.signing_keystore else None
+                )
+                signing_metadata = (
+                    Path(profile.signing_metadata) if profile.signing_metadata else None
+                )
         return BuildRequest(
             source=self._bundle,
             package_name=self._package_id,
@@ -1259,6 +1507,8 @@ class AppController(QObject):
             if self._settings.older_firmware_patch and self._older_firmware_available()
             else (),
             replace_source=self._settings.replace_source_after_build,
+            signing_keystore=signing_keystore,
+            signing_metadata=signing_metadata,
         )
 
     @Slot()
@@ -1302,6 +1552,11 @@ class AppController(QObject):
     ) -> None:
         if self._install_state == "running":
             return
+        if self._library_controller is not None and not bundle.managed_obb_names:
+            profile = self._library_controller.profile_for_target(bundle.package_name)
+            managed_names = tuple(obb.name for obb in profile.obbs) if profile else ()
+            if managed_names:
+                bundle = replace(bundle, managed_obb_names=managed_names)
         if self._bundle_installer is None:
             self._set_notice(
                 "Finished-folder installation is unavailable in this build.", "error"
@@ -1523,9 +1778,14 @@ class AppController(QObject):
             self._install_progress = 1.0
             self._last_failure_report = None
             obb_count = len(raw_outcome.result.obbs)
+            uploaded_obbs = sum(item.action == "uploaded" for item in raw_outcome.result.obbs)
+            reused_obbs = sum(
+                item.action == "renamed on Quest" for item in raw_outcome.result.obbs
+            )
+            unchanged_obbs = sum(item.action == "unchanged" for item in raw_outcome.result.obbs)
             self._set_notice(
                 f"Install verified: APK and {obb_count} OBB file"
-                f"{'s' if obb_count != 1 else ''} are on the Quest.",
+                f"{'s' if obb_count != 1 else ''} synchronized on the Quest.",
                 "success",
             )
             self._record_event(
@@ -1536,9 +1796,32 @@ class AppController(QObject):
                     ("Package", raw_outcome.result.package_name),
                     ("APK verification", "Installed package confirmed"),
                     ("OBB verification", f"{obb_count} remote file sizes confirmed"),
+                    ("OBBs uploaded", str(uploaded_obbs)),
+                    ("OBBs reused on Quest", str(reused_obbs)),
+                    ("OBBs already current", str(unchanged_obbs)),
                     ("Local source", str(raw_outcome.bundle.root)),
                 ),
             )
+            if self._library_controller is not None:
+                original_package = ""
+                if self._matched_library_profile_id:
+                    matched = self._library_controller.profile(self._matched_library_profile_id)
+                    original_package = matched.original_package if matched is not None else ""
+                try:
+                    profile = self._library_controller.record_install(
+                        raw_outcome.bundle,
+                        raw_outcome.result,
+                        self._device.serial,
+                        original_package=original_package,
+                    )
+                    self._matched_library_profile_id = profile.id
+                    self.bundleChanged.emit()
+                except OSError as exc:
+                    self._record_event(
+                        "LIBRARY",
+                        "Installed game profile could not be saved",
+                        (("Reason", str(exc)),),
+                    )
             self._delete_source_after_verified_install(raw_outcome.bundle)
         self.readinessChanged.emit()
 
@@ -1575,10 +1858,12 @@ class AppController(QObject):
         folder: Path,
         *,
         replace_existing: bool,
+        automatic: bool = False,
     ) -> None:
         if self._signing_manager is None or self.isBusy:
             return
         self._signing_busy = True
+        self._automatic_signing_backup = automatic and action == "backup"
         self.signingChanged.emit()
         self.readinessChanged.emit()
         self._set_notice(
@@ -1627,6 +1912,8 @@ class AppController(QObject):
     def _apply_signing_outcome(self, raw_outcome: object) -> None:
         if not isinstance(raw_outcome, SigningOperationOutcome):
             return
+        automatic_backup = self._automatic_signing_backup
+        self._automatic_signing_backup = False
         self._signing_busy = False
         self.signingChanged.emit()
         self.readinessChanged.emit()
@@ -1647,6 +1934,8 @@ class AppController(QObject):
             destination = raw_outcome.backup.destination
             self._set_notice(f"Signing key backed up to {destination.name}.", "success")
             self._record_activity(f"Signing-key backup created: {destination}")
+            if automatic_backup:
+                self.signingBackupCompletedRequested.emit(str(destination))
             return
         assert raw_outcome.restore is not None
         recovery = raw_outcome.restore.recovery
@@ -1732,8 +2021,14 @@ class AppController(QObject):
         )
         self.readinessChanged.emit()
 
-    def _refresh_preflight(self) -> None:
+    def _refresh_preflight(self, *, preserve_notice: bool = False) -> None:
         request = self._build_request()
+        library_error = self._library_identity_error()
+        if library_error:
+            self._preflight = None
+            self._set_notice(library_error, "warning")
+            self.readinessChanged.emit()
+            return
         if self._preflight_service is None or request is None:
             self.readinessChanged.emit()
             return
@@ -1748,7 +2043,8 @@ class AppController(QObject):
         tone = (
             "success" if self._preflight.ready and not self._preflight.warnings else "warning"
         )
-        self._set_notice(self._preflight.summary, tone)
+        if not preserve_notice:
+            self._set_notice(self._preflight.summary, tone)
         self.readinessChanged.emit()
 
     @Slot(str)
@@ -1776,9 +2072,17 @@ class AppController(QObject):
         if self._build_result is not None:
             self._open_local_path(self._build_result.output_root, "finished folder")
             return
+        conflict = self._output_conflict()
+        if conflict is not None and self._can_build():
+            alternative = self._numbered_output(conflict)
+            self._pending_output_conflict = conflict
+            self.outputConflictRequested.emit(str(conflict), str(alternative))
+            return
         if not self._can_build():
             self._set_notice(
-                self._package_error() or "Choose a game folder first.",
+                self._library_identity_error()
+                or self._package_error()
+                or "Choose a game folder first.",
                 "warning",
             )
             return
@@ -1789,6 +2093,7 @@ class AppController(QObject):
         generation = self._build_generation
         token = CancellationToken()
         self._build_token = token
+        self._active_build_request = request
         self._build_started_at = time.monotonic()
         self._build_log_step = "Preparing isolated workspace"
         self._build_state = "running"
@@ -1797,9 +2102,7 @@ class AppController(QObject):
         self._last_failure_report = None
         patch_only = self._patch_only_build()
         if patch_only and request.replace_source:
-            self._set_notice(
-                "Applying the patch and verifying it before replacing the source."
-            )
+            self._set_notice("Applying the patch and verifying it before replacing the source.")
         elif patch_only:
             self._set_notice(
                 "Applying the patch in a separate copy. The source stays untouched."
@@ -1835,6 +2138,50 @@ class AppController(QObject):
             args=(generation, request, token),
             daemon=True,
         ).start()
+
+    @Slot()
+    def cancelOutputConflict(self) -> None:
+        if self._pending_output_conflict is None:
+            return
+        self._pending_output_conflict = None
+        self._set_notice("Build cancelled. The existing output folder was not changed.")
+        self._record_activity("Build cancelled at the existing-output prompt.")
+
+    @Slot()
+    def useNumberedOutput(self) -> None:
+        conflict = self._pending_output_conflict
+        self._pending_output_conflict = None
+        if conflict is None:
+            return
+        self._output_override = self._numbered_output(conflict)
+        self.outputChanged.emit()
+        self._refresh_preflight()
+        self._record_activity(f"Using available output folder: {self._output_override}")
+        self.requestBuild()
+
+    @Slot()
+    def replaceExistingOutput(self) -> None:
+        conflict = self._pending_output_conflict
+        self._pending_output_conflict = None
+        if conflict is None or conflict != self._output_conflict():
+            self._set_notice("The output folder changed. Nothing was replaced.", "warning")
+            self._refresh_preflight()
+            return
+        if self._move_to_trash is None:
+            self._set_notice(
+                "This system cannot move the existing output to Trash safely.", "error"
+            )
+            return
+        try:
+            self._move_to_trash(conflict)
+        except OSError as exc:
+            self._set_notice(f"The existing output could not be replaced: {exc}", "error")
+            self._record_activity(f"Existing output replacement failed: {exc}")
+            return
+        self._record_activity(f"Existing output moved to Trash: {conflict}")
+        self._preflight = None
+        self._refresh_preflight()
+        self.requestBuild()
 
     def _build_worker(
         self,
@@ -1882,6 +2229,7 @@ class AppController(QObject):
             return
         self._build_token = None
         if raw_outcome.result is None:
+            self._active_build_request = None
             self._build_state = "failed"
             self._build_progress = 0.0
             message = raw_outcome.error or "The build did not finish."
@@ -1908,6 +2256,8 @@ class AppController(QObject):
                 self.partialOutputChanged.emit()
             self.readinessChanged.emit()
             return
+        completed_request = self._active_build_request
+        self._active_build_request = None
         self._build_result = raw_outcome.result
         self._last_failure_report = None
         self._build_state = "complete"
@@ -1963,16 +2313,47 @@ class AppController(QObject):
                 ("JSON report", str(raw_outcome.result.report)),
             ),
         )
+        if self._library_controller is not None and completed_request is not None:
+            try:
+                profile = self._library_controller.record_build(
+                    completed_request.source,
+                    completed_request.package_name,
+                    raw_outcome.result,
+                    completed_request.patches,
+                )
+                self._matched_library_profile_id = profile.id
+                self.bundleChanged.emit()
+            except OSError as exc:
+                self._record_event(
+                    "LIBRARY",
+                    "Game profile could not be saved",
+                    (("Reason", str(exc)),),
+                )
         self.signingChanged.emit()
         self.readinessChanged.emit()
-        if (
-            self._settings.sign_apks
-            and self._settings.key_backup_reminder
-            and self._signing_manager is not None
-        ):
-            state = self._signing_manager.state()
-            if state.complete and not state.backed_up:
-                self.signingBackupReminderRequested.emit()
+        self._handle_post_build_key_backup()
+
+    def _handle_post_build_key_backup(self) -> None:
+        if not self._settings.sign_apks or self._signing_manager is None:
+            return
+        state = self._signing_manager.state()
+        if not state.complete or state.backed_up:
+            return
+        if self._settings.key_backup_folder:
+            folder = Path(self._settings.key_backup_folder).expanduser()
+            if folder.is_dir():
+                self._start_signing_operation(
+                    "backup",
+                    folder,
+                    replace_existing=False,
+                    automatic=True,
+                )
+                return
+            self._record_activity(
+                f"Automatic signing-key backup folder is unavailable: {folder}"
+            )
+        if self._settings.key_backup_reminder:
+            self.signingBackupReminderRequested.emit()
 
     @Slot()
     def discardPartialBuild(self) -> None:
@@ -2039,6 +2420,8 @@ class AppController(QObject):
         self._build_progress = 0.0
         self._build_result = None
         self._output_parent = None
+        self._output_override = None
+        self._pending_output_conflict = None
         self._older_firmware_supported = False
         if self._install_token is not None:
             self._install_token.cancel()

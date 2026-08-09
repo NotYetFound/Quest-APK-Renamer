@@ -19,7 +19,7 @@ Get the current stable build from the
 
 | Platform | Recommended download | Alternative |
 | --- | --- | --- |
-| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.2-Setup.exe` | Portable ZIP |
+| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.4-Setup.exe` | Portable ZIP |
 | Linux x86_64 | AppImage | Portable tarball with launcher installer |
 | Apple Silicon macOS | `macOS-arm64.dmg` | — |
 | Intel macOS | `macOS-x86_64.dmg` | — |
@@ -60,6 +60,20 @@ build button unlocks. Folders and individual APKs can also be dropped directly o
 
 Quick ID presets include `.mr`, `.dev`, `.test`, and `.qa`. Output normally goes into a sibling
 folder ending in ` - Renamed`.
+
+### Automatic game Library and updates
+
+![Automatic game Library and update actions](docs/screenshots/library.png)
+
+The Library fills itself after successful builds and verified installs. Each entry keeps the
+original package ID, renamed package ID, installed version, managed OBB names, and the exact signing
+identity needed for a compatible update. Select a saved game and choose its newer APK or complete
+game folder; the app verifies the original package and signer, then restores the renamed identity
+automatically.
+
+During installation, existing OBBs are compared before transfer. Identical data can be kept or
+renamed directly on the Quest, while changed files are staged and verified before old managed or
+versioned OBBs are removed. This avoids accumulating duplicate versioned OBBs across updates.
 
 ### Bulk rename and install
 
@@ -109,6 +123,8 @@ loader into an APK that did not already contain that file.
 - One persistent signing identity is reused so renamed apps can receive later updates.
 - Existing legacy Quest APK Renamer signing material is validated and migrated automatically.
 - Backup and restore operations are integrity-checked and activated atomically.
+- An optional default backup folder can create a separate key backup automatically and report its
+  exact location while Library key storage continues automatically.
 - Recognized original signers can be recorded in the new certificate lineage.
 - Interrupted builds are detected on the next launch and can be opened, kept, or removed.
 - App-created old outputs can be moved to the operating-system Trash after a report safety check.
@@ -130,10 +146,10 @@ capabilities so features do not disappear into release notes or menus.
 - Select a game folder, paste its path, choose one exact APK, or drag and drop either one.
 - Install the app's latest completed build or select any existing finished APK/OBB folder.
 - Open or change the automatic output location directly from the dashboard.
-- Dedicated Dashboard, Bulk Queue, APK Inspector, Settings, and standalone Logs views.
+- Dedicated Dashboard, Library, Bulk Queue, APK Inspector, Settings, and standalone Logs views.
 - Responsive scrolling, subtle state transitions, visible keyboard focus, and safe default focus
   in destructive confirmations.
-- `Ctrl+1`–`Ctrl+4` switch pages, `Ctrl+O` opens the game picker, and `Ctrl+L` opens Logs.
+- `Ctrl+1`–`Ctrl+5` switch pages, `Ctrl+O` opens the game picker, and `Ctrl+L` opens Logs.
 
 ### APK, OBB, and manifest processing
 
@@ -143,6 +159,8 @@ capabilities so features do not disappear into release notes or menus.
   verification, and optional OBB-copy/signing switches in Settings.
 - Matching OBB directory/filename changes and `release.manifest` regeneration.
 - Atomic output publishing into a sibling ` - Renamed` folder or a chosen destination.
+- Existing output folders offer **Cancel**, recoverable **Replace existing**, or the next numbered
+  output such as ` - Renamed (2)` instead of blocking the build.
 - `RENAMED-BUNDLE.txt`, human-readable `RENAME-REPORT.txt`, and structured
   `RENAME-REPORT.json` output with source/output signing provenance.
 - Optional, checksum-pinned Event Horizon older-firmware loader replacement, only when the
@@ -188,6 +206,8 @@ capabilities so features do not disappear into release notes or menus.
 
 - Persistent local signing identity reused for compatible updates to renamed apps.
 - Optional signing-key backup reminder plus manual integrity-checked backup and atomic restore.
+- Optional default backup location with automatic post-build backup and a confirmation containing
+  the saved path.
 - Existing legacy signing-key migration with validation and preservation of the original files.
 - Known-signer recognition based only on certificate `CN` and `O` values.
 - Embedded `Previously signed by …` provenance, cached per-lineage signing identities, and backups

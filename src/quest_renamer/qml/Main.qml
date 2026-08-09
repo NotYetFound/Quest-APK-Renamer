@@ -25,6 +25,7 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+2"; onActivated: window.showPage(1) }
     Shortcut { sequence: "Ctrl+3"; onActivated: window.showPage(2) }
     Shortcut { sequence: "Ctrl+4"; onActivated: window.showPage(3) }
+    Shortcut { sequence: "Ctrl+5"; onActivated: window.showPage(4) }
     Shortcut { sequence: "Ctrl+L"; onActivated: logWindow.openWindow() }
     Shortcut {
         sequence: "Ctrl+O"
@@ -73,8 +74,14 @@ ApplicationWindow {
                 appController.chooseOutputParent(url)
             else if (purpose === "install")
                 appController.installFinishedFolder(url)
+            else if (purpose === "libraryUpdate") {
+                appController.chooseLibraryUpdate(url)
+                window.showPage(0)
+            }
             else if (purpose === "signingBackup")
                 appController.backupSigningKey(url)
+            else if (purpose === "defaultKeyBackup")
+                appController.setDefaultKeyBackupFolder(url)
             else if (purpose === "signingRestore")
                 appController.restoreSigningKey(url)
             else if (purpose === "bulkFolder")
@@ -87,6 +94,16 @@ ApplicationWindow {
         function onFilesSelected(purpose, urls) {
             if (purpose === "bulkApks")
                 bulkController.addApks(urls)
+        }
+        function onFileSelected(purpose, url) {
+            if (purpose === "libraryUpdate") {
+                appController.chooseLibraryUpdate(url)
+                window.showPage(0)
+            }
+        }
+        function onSelectionCancelled(purpose) {
+            if (purpose === "libraryUpdate")
+                appController.cancelLibraryUpdateSelection()
         }
         function onDialogFailed(detail) {
             pickerFailureDialog.bodyText = detail
@@ -137,6 +154,32 @@ ApplicationWindow {
     }
 
     DecisionDialog {
+        id: signingBackupCompletedDialog
+        property string backupPath: ""
+        heading: "Signing key backed up"
+        bodyText: "Your signing key is still saved automatically with its Library entry. A separate backup was also created here:\n\n" + backupPath
+        primaryText: "Done"
+        secondaryText: "Open backup"
+        onSecondaryChosen: appController.openKeyBackupFolder(backupPath)
+    }
+
+    DecisionDialog {
+        id: outputConflictDialog
+        property string existingPath: ""
+        property string alternativePath: ""
+        heading: "That save folder already exists"
+        bodyText: "Choose a different numbered folder, replace the existing folder, or cancel.\n\nExisting: " + existingPath + "\n\nNumbered copy: " + alternativePath
+        primaryText: "Replace existing"
+        secondaryText: "Cancel"
+        tertiaryText: "Use numbered copy"
+        destructive: true
+        onPrimaryChosen: appController.replaceExistingOutput()
+        onSecondaryChosen: appController.cancelOutputConflict()
+        onTertiaryChosen: appController.useNumberedOutput()
+        onDismissed: appController.cancelOutputConflict()
+    }
+
+    DecisionDialog {
         id: signingRestoreConfirmationDialog
         heading: "Replace the current signing identity?"
         bodyText: "The selected backup will become the identity used for future builds. The current identity will be preserved in a recovery folder."
@@ -152,8 +195,8 @@ ApplicationWindow {
         id: packageConflictDialog
         property string packageName: ""
         heading: "This app is already installed"
-        bodyText: packageName + " is already on the Quest. Continuing will attempt an update. If its signing key differs, Android will reject the update and keep the existing app unchanged."
-        primaryText: "Continue"
+        bodyText: packageName + " is already on the Quest. Updating keeps its existing app data and synchronizes the APK and OBB files.\n\nTo install a separate copy, build it with a different app ID."
+        primaryText: "Update"
         secondaryText: "Cancel"
         onPrimaryChosen: appController.continuePackageInstall()
         onSecondaryChosen: appController.cancelPackageInstall()
@@ -210,6 +253,15 @@ ApplicationWindow {
         function onSigningBackupReminderRequested() {
             signingBackupReminderDialog.open()
         }
+        function onSigningBackupCompletedRequested(path) {
+            signingBackupCompletedDialog.backupPath = path
+            signingBackupCompletedDialog.open()
+        }
+        function onOutputConflictRequested(existingPath, alternativePath) {
+            outputConflictDialog.existingPath = existingPath
+            outputConflictDialog.alternativePath = alternativePath
+            outputConflictDialog.open()
+        }
         function onSigningRestoreConfirmationRequested(path) {
             signingRestoreConfirmationDialog.open()
         }
@@ -258,7 +310,7 @@ ApplicationWindow {
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: 18
+            anchors.leftMargin: 12
             anchors.rightMargin: 20
             spacing: 10
 
@@ -337,7 +389,7 @@ ApplicationWindow {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.margins: 10
-                spacing: 3
+                spacing: 0
 
                 Text {
                     text: "WORKSPACE"
@@ -347,35 +399,42 @@ ApplicationWindow {
                     font.letterSpacing: 1.1
                     Layout.leftMargin: 10
                     Layout.topMargin: 7
-                    Layout.bottomMargin: 5
+                    Layout.bottomMargin: 8
                 }
                 NavItem {
                     Layout.fillWidth: true
                     label: "Dashboard"
-                    glyph: "◆"
+                    iconSource: Qt.resolvedUrl("../assets/nav-dashboard.svg")
                     selected: window.pageIndex === 0
                     onClicked: window.showPage(0)
                 }
                 NavItem {
                     Layout.fillWidth: true
-                    label: "Bulk queue"
-                    glyph: "≡"
+                    label: "Library"
+                    iconSource: Qt.resolvedUrl("../assets/nav-library.svg")
                     selected: window.pageIndex === 1
                     onClicked: window.showPage(1)
                 }
                 NavItem {
                     Layout.fillWidth: true
-                    label: "APK Inspector"
-                    glyph: "⌕"
+                    label: "Bulk queue"
+                    iconSource: Qt.resolvedUrl("../assets/nav-bulk.svg")
                     selected: window.pageIndex === 2
                     onClicked: window.showPage(2)
                 }
                 NavItem {
                     Layout.fillWidth: true
-                    label: "Settings"
-                    glyph: "⚙"
+                    label: "APK Inspector"
+                    iconSource: Qt.resolvedUrl("../assets/nav-inspector.svg")
                     selected: window.pageIndex === 3
                     onClicked: window.showPage(3)
+                }
+                NavItem {
+                    Layout.fillWidth: true
+                    label: "Settings"
+                    iconSource: Qt.resolvedUrl("../assets/nav-settings.svg")
+                    selected: window.pageIndex === 4
+                    onClicked: window.showPage(4)
                 }
             }
 
@@ -569,6 +628,7 @@ ApplicationWindow {
                                             text: appController.hasBundle
                                                   ? appController.apkName + "  •  " + appController.obbSummary + "  •  " + appController.bundleSize
                                                     + (appController.versionSummary ? "  •  " + appController.versionSummary : "")
+                                                    + (appController.libraryMatch ? "  •  " + appController.libraryMatch : "")
                                                   : "Paste a path, browse, or drop one APK or game folder here."
                                             color: appController.hasBundle ? window.textSecondary : "#777777"
                                             font.pixelSize: 10
@@ -951,6 +1011,263 @@ ApplicationWindow {
                                         radius: 4
                                         color: window.accent
                                         Behavior on width { NumberAnimation { duration: 120 } }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Library
+                Item {
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 30
+                        anchors.rightMargin: 30
+                        anchors.topMargin: 16
+                        anchors.bottomMargin: 24
+                        spacing: 12
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    text: libraryController.count === 1
+                                          ? "1 saved game"
+                                          : libraryController.count + " saved games"
+                                    color: window.textPrimary
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    text: "Select a game below, then choose its newer APK or game folder. Its renamed ID and signing key are reused automatically."
+                                    color: window.textSecondary
+                                    font.pixelSize: 10
+                                    elide: Text.ElideRight
+                                }
+                            }
+                            AppButton {
+                                text: "Open keys"
+                                enabled: !appController.isBusy
+                                onClicked: libraryController.openKeyFolder()
+                            }
+                            AppButton {
+                                text: "Open Library data"
+                                quiet: true
+                                enabled: !appController.isBusy
+                                onClicked: libraryController.openLibraryFolder()
+                            }
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            radius: 3
+                            color: window.panel
+                            border.width: 1
+                            border.color: window.line
+
+                            Text {
+                                visible: libraryController.isEmpty
+                                anchors.centerIn: parent
+                                width: Math.min(parent.width - 70, 480)
+                                text: "No saved games yet\n\nBuild or install a renamed game and it will appear here automatically, ready for future updates."
+                                color: window.textSecondary
+                                font.pixelSize: 12
+                                horizontalAlignment: Text.AlignHCenter
+                                wrapMode: Text.WordWrap
+                            }
+
+                            ScrollView {
+                                visible: !libraryController.isEmpty
+                                anchors.fill: parent
+                                anchors.margins: 1
+                                contentWidth: availableWidth
+                                clip: true
+
+                                ColumnLayout {
+                                    width: parent.width
+                                    spacing: 0
+
+                                    Repeater {
+                                        model: libraryController.rows
+                                        delegate: Rectangle {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 102
+                                            color: libraryController.selectedId === modelData.id
+                                                   ? "#292929"
+                                                   : rowMouse.containsMouse ? "#252525" : "transparent"
+                                            Behavior on color { ColorAnimation { duration: 100 } }
+
+                                            Rectangle {
+                                                anchors.bottom: parent.bottom
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                height: 1
+                                                color: window.line
+                                            }
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: 16
+                                                anchors.rightMargin: 10
+                                                spacing: 12
+                                                Rectangle {
+                                                    Layout.preferredWidth: 8
+                                                    Layout.preferredHeight: 8
+                                                    radius: 4
+                                                    color: modelData.keyReady ? "#70b18f" : "#9a8555"
+                                                }
+                                                ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 5
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: modelData.gameName
+                                                            color: window.textPrimary
+                                                            font.pixelSize: 13
+                                                            font.weight: Font.DemiBold
+                                                            elide: Text.ElideRight
+                                                        }
+                                                        Rectangle {
+                                                            implicitWidth: libraryStatus.implicitWidth + 16
+                                                            implicitHeight: 22
+                                                            radius: 11
+                                                            color: modelData.installed ? "#263b32" : "#343434"
+                                                            Text {
+                                                                id: libraryStatus
+                                                                anchors.centerIn: parent
+                                                                text: modelData.status
+                                                                color: modelData.installed ? "#78b894" : "#a8a8a8"
+                                                                font.pixelSize: 9
+                                                                font.weight: Font.DemiBold
+                                                            }
+                                                        }
+                                                    }
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: "Original   " + modelData.originalPackage
+                                                        color: window.textSecondary
+                                                        font.pixelSize: 10
+                                                        elide: Text.ElideMiddle
+                                                    }
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: "Renamed  " + modelData.targetPackage
+                                                        color: "#b9b9b9"
+                                                        font.pixelSize: 10
+                                                        elide: Text.ElideMiddle
+                                                    }
+                                                }
+                                                ColumnLayout {
+                                                    spacing: 5
+                                                    Text {
+                                                        Layout.alignment: Qt.AlignRight
+                                                        text: modelData.versionText
+                                                        color: window.textSecondary
+                                                        font.pixelSize: 10
+                                                    }
+                                                    Text {
+                                                        Layout.alignment: Qt.AlignRight
+                                                        text: modelData.keyReady
+                                                              ? "Signing key ready"
+                                                              : modelData.keyStatus
+                                                        color: modelData.keyReady ? "#78b894" : "#d0ad68"
+                                                        font.pixelSize: 10
+                                                    }
+                                                }
+                                                AppButton {
+                                                    text: "Select"
+                                                    primary: libraryController.selectedId === modelData.id
+                                                    enabled: !appController.isBusy
+                                                    onClicked: libraryController.select(modelData.id)
+                                                }
+                                            }
+                                            MouseArea {
+                                                id: rowMouse
+                                                anchors.fill: parent
+                                                anchors.rightMargin: 92
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: libraryController.select(modelData.id)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Rectangle {
+                            visible: !libraryController.isEmpty
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: visible ? 126 : 0
+                            radius: 3
+                            color: window.panel
+                            border.width: 1
+                            border.color: window.line
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.margins: 15
+                                spacing: 18
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+                                    Text {
+                                        text: "UPDATE " + (libraryController.selected.gameName || "SELECTED GAME").toUpperCase()
+                                        color: "#777777"
+                                        font.pixelSize: 9
+                                        font.weight: Font.DemiBold
+                                        font.letterSpacing: 1
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "Choose a newer APK or a complete game folder. The saved renamed ID and signing key will be applied automatically."
+                                        color: window.textPrimary
+                                        font.pixelSize: 11
+                                        wrapMode: Text.WordWrap
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "Renamed ID  " + (libraryController.selected.targetPackage || "")
+                                              + "   •   " + (libraryController.selected.keyStatus || "")
+                                        color: window.textSecondary
+                                        font.pixelSize: 10
+                                        elide: Text.ElideMiddle
+                                    }
+                                }
+                                ColumnLayout {
+                                    spacing: 8
+                                    AppButton {
+                                        Layout.fillWidth: true
+                                        text: "Choose update APK…"
+                                        enabled: !appController.isBusy
+                                        onClicked: {
+                                            appController.prepareLibraryUpdate(libraryController.selectedId)
+                                            fileDialogController.chooseApk(
+                                                "libraryUpdate",
+                                                "Choose the newer game APK",
+                                                libraryController.selected.sourcePath || ""
+                                            )
+                                        }
+                                    }
+                                    AppButton {
+                                        Layout.fillWidth: true
+                                        text: "Choose update folder…"
+                                        primary: true
+                                        enabled: !appController.isBusy
+                                        onClicked: {
+                                            appController.prepareLibraryUpdate(libraryController.selectedId)
+                                            fileDialogController.chooseFolder(
+                                                "libraryUpdate",
+                                                "Choose the newer game folder",
+                                                libraryController.selected.sourcePath || ""
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1570,7 +1887,7 @@ ApplicationWindow {
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 132
+                                Layout.preferredHeight: 206
                                 radius: 3
                                 color: window.panel
                                 border.width: 1
@@ -1592,6 +1909,68 @@ ApplicationWindow {
                                         color: "#a5a5a5"
                                         font.pixelSize: 12
                                         elide: Text.ElideRight
+                                    }
+                                    Text {
+                                        text: "DEFAULT BACKUP LOCATION"
+                                        color: "#777777"
+                                        font.pixelSize: 9
+                                        font.weight: Font.DemiBold
+                                        font.letterSpacing: 1
+                                        Layout.topMargin: 3
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 32
+                                            radius: 3
+                                            color: defaultBackupMouse.containsMouse ? "#282828" : "#232323"
+                                            border.width: 1
+                                            border.color: defaultBackupMouse.containsMouse ? "#505050" : "#383838"
+                                            Text {
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                anchors.margins: 10
+                                                text: appController.settings.keyBackupFolder
+                                                      || "Not set — ask after the first signed build"
+                                                color: appController.settings.keyBackupFolder
+                                                       ? window.textSecondary : "#777777"
+                                                font.pixelSize: 10
+                                                elide: Text.ElideMiddle
+                                            }
+                                            MouseArea {
+                                                id: defaultBackupMouse
+                                                anchors.fill: parent
+                                                enabled: !appController.isBusy
+                                                hoverEnabled: true
+                                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                onClicked: fileDialogController.chooseFolder(
+                                                    "defaultKeyBackup",
+                                                    "Choose the default signing-key backup location",
+                                                    appController.settings.keyBackupFolder
+                                                    || appController.folderPath
+                                                )
+                                            }
+                                        }
+                                        AppButton {
+                                            text: appController.settings.keyBackupFolder ? "Change…" : "Choose…"
+                                            enabled: !appController.isBusy
+                                            onClicked: fileDialogController.chooseFolder(
+                                                "defaultKeyBackup",
+                                                "Choose the default signing-key backup location",
+                                                appController.settings.keyBackupFolder
+                                                || appController.folderPath
+                                            )
+                                        }
+                                        AppButton {
+                                            visible: Boolean(appController.settings.keyBackupFolder)
+                                            text: "Clear"
+                                            quiet: true
+                                            enabled: !appController.isBusy
+                                            onClicked: appController.clearDefaultKeyBackupFolder()
+                                        }
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true

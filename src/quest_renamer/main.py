@@ -10,6 +10,7 @@ from pathlib import Path
 from PySide6.QtCore import QCoreApplication, QTimer, QUrl
 from PySide6.QtGui import QIcon
 from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtQuick import QQuickWindow
 from PySide6.QtWidgets import QApplication
 
 from quest_renamer import __version__
@@ -29,6 +30,7 @@ from quest_renamer.infrastructure.legacy_identity import (
     LegacyIdentityMigrationError,
     migrate_legacy_signing_identity,
 )
+from quest_renamer.infrastructure.library_store import GameLibraryStore
 from quest_renamer.infrastructure.local_bundles import LocalBundleInspector
 from quest_renamer.infrastructure.older_firmware_patch import verified_older_firmware_asset
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
@@ -44,6 +46,7 @@ from quest_renamer.presentation.app_controller import AppController
 from quest_renamer.presentation.bulk_controller import BulkController
 from quest_renamer.presentation.file_dialog_controller import FileDialogController
 from quest_renamer.presentation.inspector_controller import InspectorController
+from quest_renamer.presentation.library_controller import LibraryController
 from quest_renamer.presentation.tool_controller import ToolController
 from quest_renamer.presentation.update_controller import UpdateController
 from quest_renamer.services.preflight import AutomaticPreflight
@@ -58,6 +61,15 @@ def initial_folder(arguments: list[str]) -> Path | None:
         if candidate.is_dir():
             return candidate.resolve()
     return None
+
+
+def argument_value(arguments: list[str], name: str) -> str:
+    """Return one developer CLI option value without introducing a parser dependency."""
+    try:
+        index = arguments.index(name)
+    except ValueError:
+        return ""
+    return arguments[index + 1] if index + 1 < len(arguments) else ""
 
 
 def package_resource_root(
@@ -145,8 +157,16 @@ def main() -> int:
     # developer override before startup.
     os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
 
-    smoke_test = "--smoke-test" in sys.argv[1:]
-    launch_folder = initial_folder(sys.argv[1:])
+    arguments = sys.argv[1:]
+    smoke_test = "--smoke-test" in arguments
+    screenshot_value = argument_value(arguments, "--capture-screenshot")
+    screenshot_path = Path(screenshot_value).expanduser() if screenshot_value else None
+    screenshot_page_value = argument_value(arguments, "--screenshot-page")
+    try:
+        screenshot_page = max(0, min(4, int(screenshot_page_value or "0")))
+    except ValueError:
+        screenshot_page = 0
+    launch_folder = initial_folder(arguments)
     frozen = getattr(sys, "_MEIPASS", None)
     configure_packaged_rendering(
         platform_name=sys.platform,
@@ -192,6 +212,11 @@ def main() -> int:
     settings_store = JsonSettingsStore(paths.settings_file)
     activity_log = ActivityLog(paths.log_file)
     signing_root = paths.data / "signing"
+    library_controller = LibraryController(
+        GameLibraryStore(paths.library_file),
+        signing_root=signing_root,
+        parent=engine,
+    )
 
     def log_migration(message: str) -> None:
         activity_log.append(message)
@@ -251,6 +276,7 @@ def main() -> int:
             toolchain,
             older_firmware_ready=older_firmware_asset is not None,
         ),
+        library_controller=library_controller,
         parent=engine,
     )
     detailed_inspector = FullDecodeApkInspector(
@@ -355,20 +381,35 @@ def main() -> int:
     inspector_controller.activityMessage.connect(controller.recordActivity)
     tool_controller.activityMessage.connect(controller.recordActivity)
     update_controller.activityMessage.connect(controller.recordActivity)
+    library_controller.activityMessage.connect(controller.recordActivity)
     controller.settingsChanged.connect(update_controller.refreshPreference)
     engine.rootContext().setContextProperty("appController", controller)
     engine.rootContext().setContextProperty("bulkController", bulk_controller)
     engine.rootContext().setContextProperty("inspectorController", inspector_controller)
     engine.rootContext().setContextProperty("toolController", tool_controller)
     engine.rootContext().setContextProperty("fileDialogController", file_dialog_controller)
+    engine.rootContext().setContextProperty("libraryController", library_controller)
     engine.rootContext().setContextProperty("updateController", update_controller)
     engine.rootContext().setContextProperty("appVersion", __version__)
     engine.load(QUrl.fromLocalFile(str(package_root / "qml" / "Main.qml")))
     if not engine.rootObjects():
         return 1
+    root_window = engine.rootObjects()[0]
+    if screenshot_path is not None and isinstance(root_window, QQuickWindow):
+        root_window.setProperty("pageIndex", screenshot_page)
+
+        def capture_screenshot() -> None:
+            assert screenshot_path is not None
+            screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+            saved = root_window.grabWindow().save(str(screenshot_path))
+            app.exit(0 if saved else 2)
+
+        QTimer.singleShot(700, capture_screenshot)
     if launch_folder is not None:
         controller.chooseFolder(QUrl.fromLocalFile(str(launch_folder)))
-    if smoke_test:
+    if screenshot_path is not None:
+        pass
+    elif smoke_test:
         QTimer.singleShot(250, app.quit)
     else:
         controller.startDeviceMonitoring()

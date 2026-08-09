@@ -16,6 +16,7 @@
   </description>
   <url type="homepage">https://github.com/RockoTheeHut/Quest-APK-Renamer</url>
   <releases>
+    <release version="1.4.4" date="2026-08-08"/>
     <release version="1.4.2" date="2026-08-08"/>
   </releases>
   <launchable type="desktop-id">io.github.questapkrenamer.app.desktop</launchable>

@@ -22,6 +22,8 @@ Domain models          Infrastructure adapters
 - The dashboard and bulk queue use separate presentation controllers and share the same typed
   engine adapters. Their busy-state providers prevent both workspaces from starting expensive
   operations at the same time.
+- The Library controller presents automatically persisted game identities. The JSON store owns
+  atomic serialization; the main workflow only asks it to match, record, or retrieve profiles.
 - The detailed Inspector has its own controller and full-decode adapter. Normal Dashboard analysis
   remains manifest-only; deeper signature, resource, hash, and reference scans run only when the
   user opens the Inspector.
@@ -53,6 +55,9 @@ Domain models          Infrastructure adapters
   hashes. A new lineage key makes the prior backup marker stale. Restores validate the complete
   backup before asking for replacement confirmation, activate through a sibling staging folder,
   and preserve the previous identity in a recovery folder.
+- Quest updates stage changed OBBs under transaction names, reuse identical remote data, and keep
+  replacement backups until APK and OBB verification succeeds. Cleanup targets only versioned
+  expansion files or names previously recorded as app-managed; unknown files remain untouched.
 
 ## Interaction policy
 
