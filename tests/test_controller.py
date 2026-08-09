@@ -759,7 +759,7 @@ class ControllerTests(unittest.TestCase):
             controller.requestBuild()
 
             self.assertEqual(len(prompts), 1)
-            self.assertEqual(prompts[0][0], str(existing))
+            self.assertEqual(Path(prompts[0][0]).resolve(), existing.resolve())
             self.assertTrue(prompts[0][1].endswith("source - Renamed (2)"))
             self.assertEqual((existing / "keep.txt").read_text(encoding="utf-8"), "existing")
 
@@ -835,7 +835,7 @@ class ControllerTests(unittest.TestCase):
             self._wait_until(lambda: bool(completed))
 
             self.assertTrue(manager.state().backed_up)
-            self.assertEqual(Path(completed[0]).parent, backup_parent)
+            self.assertEqual(Path(completed[0]).parent.resolve(), backup_parent.resolve())
             self.assertEqual(controller.settings["keyBackupFolder"], str(backup_parent))
 
     def test_old_output_cleanup_requires_report_then_moves_folder_to_trash(self) -> None:
