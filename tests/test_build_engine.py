@@ -106,7 +106,11 @@ class BuildEngineTests(unittest.TestCase):
                 recovery_record=root / "data" / "build-recovery.json",
             )
 
-            result = engine.build(request)
+            progress_updates: list[tuple[float, str]] = []
+            result = engine.build(
+                request,
+                progress=lambda value, message: progress_updates.append((value, message)),
+            )
 
             self.assertEqual(apk.read_bytes(), original_apk)
             self.assertEqual(result.output_root, output.resolve())
@@ -120,6 +124,10 @@ class BuildEngineTests(unittest.TestCase):
             )
             self.assertFalse(any(root.glob(".finished.staging-*")))
             self.assertFalse((root / "data" / "build-recovery.json").exists())
+            self.assertTrue(any("Saving APK •" in message for _, message in progress_updates))
+            self.assertTrue(
+                any("Copying OBB 1 of 1 •" in message for _, message in progress_updates)
+            )
 
     def test_patch_only_pipeline_keeps_package_identity_and_applies_patch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -138,15 +146,23 @@ class BuildEngineTests(unittest.TestCase):
             )
             engine = self._engine(root, older_firmware_asset=asset)
 
+            progress_updates: list[tuple[float, str]] = []
             with patch(
                 "quest_renamer.infrastructure.apk_build_engine.apply_older_firmware_patch"
             ) as apply_patch:
-                result = engine.build(request)
+                result = engine.build(
+                    request,
+                    progress=lambda value, message: progress_updates.append((value, message)),
+                )
 
             apply_patch.assert_called_once()
             self.assertEqual(result.rewrite.changed_occurrences, 0)
             self.assertEqual(result.rewrite.changed_files, 0)
             self.assertEqual(result.apk.name, "com.example.game.apk")
+            self.assertIn(
+                (0.34, "Applying older-firmware compatibility patch"),
+                progress_updates,
+            )
 
     def test_same_package_identity_is_rejected_without_a_patch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

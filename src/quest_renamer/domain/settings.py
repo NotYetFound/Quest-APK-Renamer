@@ -16,6 +16,7 @@ class AppSettings:
     automatic_preflight: bool = True
     check_updates: bool = True
     key_backup_reminder: bool = True
+    key_backup_folder: str = ""
     dismissed_update: str = ""
 
     @classmethod

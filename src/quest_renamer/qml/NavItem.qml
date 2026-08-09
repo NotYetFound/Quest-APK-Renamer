@@ -1,28 +1,33 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 
 Button {
     id: control
     property string label: ""
-    property string glyph: ""
+    property url iconSource
     property bool selected: false
+    readonly property int visualHeight: 40
+    readonly property int gapHitHeight: 3
 
-    implicitHeight: 40
+    implicitHeight: visualHeight + gapHitHeight
     leftPadding: 12
     rightPadding: 10
+    bottomPadding: topPadding + gapHitHeight
     focusPolicy: Qt.StrongFocus
     Accessible.name: label
     Accessible.description: selected ? "Current page" : "Open page"
 
     contentItem: Row {
         spacing: 11
-        Text {
+        IconImage {
             width: 18
+            height: 18
             anchors.verticalCenter: parent.verticalCenter
-            text: control.glyph
+            source: control.iconSource
             color: control.selected ? "#d7d7d7" : "#858585"
-            font.pixelSize: 13
-            horizontalAlignment: Text.AlignHCenter
+            sourceSize.width: 16
+            sourceSize.height: 16
         }
         Text {
             anchors.verticalCenter: parent.verticalCenter
@@ -34,6 +39,8 @@ Button {
     }
 
     background: Rectangle {
+        anchors.top: parent.top
+        height: control.visualHeight
         radius: 2
         color: control.selected ? "#272727"
               : control.activeFocus ? "#252525"

@@ -26,6 +26,10 @@ class AppPaths:
     def build_recovery_file(self) -> Path:
         return self.data / "build-recovery.json"
 
+    @property
+    def library_file(self) -> Path:
+        return self.data / "library.json"
+
 
 def platform_app_paths(
     *,

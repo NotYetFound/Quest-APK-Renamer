@@ -51,6 +51,7 @@ class FileDialogController(QObject):
     fileSelected = Signal(str, QUrl)
     filesSelected = Signal(str, list)
     saveSelected = Signal(str, QUrl)
+    selectionCancelled = Signal(str)
     dialogFailed = Signal(str)
 
     def __init__(
@@ -191,12 +192,16 @@ class FileDialogController(QObject):
         paths = self._pick("folder", title, initial)
         if paths:
             self.folderSelected.emit(purpose, QUrl.fromLocalFile(str(paths[0])))
+        else:
+            self.selectionCancelled.emit(purpose)
 
     @Slot(str, str, str)
     def chooseApk(self, purpose: str, title: str, initial: str = "") -> None:
         paths = self._pick("apk", title, initial)
         if paths:
             self.fileSelected.emit(purpose, QUrl.fromLocalFile(str(paths[0])))
+        else:
+            self.selectionCancelled.emit(purpose)
 
     @Slot(str, str, str)
     def chooseApks(self, purpose: str, title: str, initial: str = "") -> None:
@@ -206,6 +211,8 @@ class FileDialogController(QObject):
                 purpose,
                 [QUrl.fromLocalFile(str(path)) for path in paths],
             )
+        else:
+            self.selectionCancelled.emit(purpose)
 
     @Slot(str, str, str, str)
     def saveJson(

@@ -16,12 +16,15 @@ from quest_renamer.domain.installation import (
     InstalledPackageConflict,
 )
 from quest_renamer.domain.models import BundleDraft, DeviceSnapshot
+from quest_renamer.domain.settings import AppSettings
 from quest_renamer.domain.signers import SignerIdentity
 from quest_renamer.infrastructure.app_paths import AppPaths
 from quest_renamer.infrastructure.build_recovery import write_build_recovery
+from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
 from quest_renamer.infrastructure.signing_backup import SigningIdentityManager
 from quest_renamer.main import (
+    argument_value,
     configure_packaged_rendering,
     initial_folder,
     older_firmware_patch_candidates,
@@ -152,6 +155,12 @@ class ControllerTests(unittest.TestCase):
             package_resource_root(frozen_root=frozen),
             frozen / "quest_renamer",
         )
+
+    def test_developer_argument_value_is_optional_and_bounded_to_one_value(self) -> None:
+        arguments = ["--capture-screenshot", "screen.png", "--screenshot-page", "2"]
+        self.assertEqual(argument_value(arguments, "--capture-screenshot"), "screen.png")
+        self.assertEqual(argument_value(arguments, "--screenshot-page"), "2")
+        self.assertEqual(argument_value(arguments, "--missing"), "")
 
     def test_packaged_firmware_loader_is_a_supported_candidate(self) -> None:
         package_root = Path("/app/_internal/quest_renamer")
@@ -366,8 +375,78 @@ class ControllerTests(unittest.TestCase):
 
             self.assertTrue(controller.canBuild)
             self.assertEqual(controller.buildActionLabel, "Apply firmware patch")
+            self.assertTrue(controller.olderFirmwareSupported)
+            self.assertIn("supported", controller.olderFirmwareEligibility.lower())
+            request = controller._build_request()
+            self.assertIsNotNone(request)
+            self.assertEqual(request.patches, (PATCH_ID,))  # type: ignore[union-attr]
             self.assertIn("NothingIsFree", controller.signerLineage)
             self.assertIn("Previously signed by Meta", controller.signerLineage)
+
+    def test_older_firmware_preference_stays_enabled_and_skips_incompatible_apk(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            controller = AppController(
+                analyzer=ImmediateAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=object(),  # type: ignore[arg-type]
+                older_firmware_asset_available=True,
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+
+            controller.setSetting("older_firmware_patch", True)
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.sourcePackage == "com.example.game")
+
+            self.assertTrue(controller.settings["olderFirmwarePatch"])
+            self.assertFalse(controller.olderFirmwareSupported)
+            self.assertIn("unsupported", controller.olderFirmwareEligibility.lower())
+            request = controller._build_request()
+            self.assertIsNotNone(request)
+            self.assertEqual(request.patches, ())  # type: ignore[union-attr]
+
+    def test_older_firmware_toggle_does_not_replace_the_workflow_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            controller = AppController(paths=AppPaths(root / "data", root / "cache"))
+            original_notice = controller.notice
+
+            controller.setSetting("older_firmware_patch", True)
+
+            self.assertEqual(controller.notice, original_notice)
+            self.assertNotIn("firmware patch enabled", controller.notice.lower())
+
+    def test_older_firmware_preference_survives_a_missing_patch_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            controller = AppController(
+                analyzer=LineageAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=object(),  # type: ignore[arg-type]
+                older_firmware_asset_available=False,
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+
+            controller.setSetting("older_firmware_patch", True)
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.sourcePackage == "com.example.game")
+            controller.set_older_firmware_asset_available(False)
+
+            self.assertTrue(controller.settings["olderFirmwarePatch"])
+            self.assertTrue(controller.olderFirmwareSupported)
+            self.assertFalse(controller.olderFirmwareAvailable)
+            self.assertIn("needs repair", controller.olderFirmwareEligibility.lower())
+            request = controller._build_request()
+            self.assertIsNotNone(request)
+            self.assertEqual(request.patches, ())  # type: ignore[union-attr]
 
     def test_finished_build_uses_cross_desktop_path_opener(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -654,6 +733,110 @@ class ControllerTests(unittest.TestCase):
             self._wait_until(lambda: "Signing identity restored" in controller.notice)
 
             self.assertIn("Signing identity restored", controller.notice)
+
+    def test_existing_output_offers_a_numbered_folder_without_blocking_build(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            existing = root / "source - Renamed"
+            existing.mkdir()
+            (existing / "keep.txt").write_text("existing", encoding="utf-8")
+            controller = AppController(
+                analyzer=ImmediateAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=ImmediateBuilder(),
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+            prompts: list[tuple[str, str]] = []
+            controller.outputConflictRequested.connect(
+                lambda current, alternative: prompts.append((current, alternative))
+            )
+
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.canBuild)
+            controller.requestBuild()
+
+            self.assertEqual(len(prompts), 1)
+            self.assertEqual(prompts[0][0], str(existing))
+            self.assertTrue(prompts[0][1].endswith("source - Renamed (2)"))
+            self.assertEqual((existing / "keep.txt").read_text(encoding="utf-8"), "existing")
+
+            controller.useNumberedOutput()
+            self._wait_until(lambda: controller.buildActionLabel == "Open finished folder")
+            self.assertTrue(
+                (root / "source - Renamed (2)" / "com.dev.example.game.apk").is_file()
+            )
+
+    def test_existing_output_can_be_moved_to_trash_then_replaced(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            existing = root / "source - Renamed"
+            existing.mkdir()
+            (existing / "old.txt").write_text("old", encoding="utf-8")
+            trashed = root / "trashed-output"
+
+            def trash(path: Path) -> None:
+                path.rename(trashed)
+
+            controller = AppController(
+                analyzer=ImmediateAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=ImmediateBuilder(),
+                move_to_trash=trash,
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.canBuild)
+            controller.requestBuild()
+            controller.replaceExistingOutput()
+            self._wait_until(lambda: controller.buildActionLabel == "Open finished folder")
+
+            self.assertEqual((trashed / "old.txt").read_text(encoding="utf-8"), "old")
+            self.assertTrue((existing / "com.dev.example.game.apk").is_file())
+
+    def test_default_key_folder_backs_up_after_build_and_reports_location(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            signing = root / "data" / "signing"
+            signing.mkdir(parents=True)
+            (signing / "quest-renamer.p12").write_bytes(b"current")
+            (signing / "identity.json").write_text(
+                json.dumps({"alias": "quest-renamer", "password": "secret"}),
+                encoding="utf-8",
+            )
+            backup_parent = root / "backups"
+            backup_parent.mkdir()
+            paths = AppPaths(data=root / "data", cache=root / "cache")
+            settings_store = JsonSettingsStore(paths.settings_file)
+            settings_store.save(AppSettings(key_backup_folder=str(backup_parent)))
+            manager = SigningIdentityManager(signing)
+            controller = AppController(
+                analyzer=ImmediateAnalyzer(),
+                preflight_service=AutomaticPreflight(tools_ready=True),
+                build_engine=ImmediateBuilder(),
+                signing_manager=manager,
+                settings_store=settings_store,
+                paths=paths,
+            )
+            completed: list[str] = []
+            controller.signingBackupCompletedRequested.connect(completed.append)
+
+            controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.canBuild)
+            controller.requestBuild()
+            self._wait_until(lambda: bool(completed))
+
+            self.assertTrue(manager.state().backed_up)
+            self.assertEqual(Path(completed[0]).parent, backup_parent)
+            self.assertEqual(controller.settings["keyBackupFolder"], str(backup_parent))
 
     def test_old_output_cleanup_requires_report_then_moves_folder_to_trash(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

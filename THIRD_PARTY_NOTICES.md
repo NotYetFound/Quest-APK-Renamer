@@ -14,7 +14,11 @@ license and terms.
 | Event Horizon loader | `9ffe7009` | MIT | [veygax/eventhorizon](https://github.com/veygax/eventhorizon) |
 | Android SDK Platform-Tools | Resolved at build time | Android SDK terms | [Android developer tools](https://developer.android.com/tools/releases/platform-tools) |
 | Eclipse Temurin | JDK 21 trimmed with `jlink` | GPLv2 with Classpath Exception | [Eclipse Adoptium](https://adoptium.net/) |
+| Bootstrap Icons | `6945b700` | MIT | [twbs/icons](https://github.com/twbs/icons) |
 
 The three Android build/patch components are pinned in
 `src/quest_renamer/resources/toolchain.json` and verified before packaging. Platform builds write
 the resolved Java and ADB archive hashes to `runtime/DEPENDENCY-HASHES.txt`.
+
+The sidebar navigation uses unmodified icons from Bootstrap Icons. Its full MIT license is
+distributed with the app as `assets/bootstrap-icons-LICENSE.txt`.

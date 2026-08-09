@@ -23,6 +23,9 @@ class BuildResult:
     rewrite: PackageRewriteReport
     recovery_root: Path | None = None
     text_report: Path | None = None
+    signing_keystore: Path | None = None
+    signing_metadata: Path | None = None
+    signing_key_sha256: str = ""
 
 
 class BuildError(RuntimeError):

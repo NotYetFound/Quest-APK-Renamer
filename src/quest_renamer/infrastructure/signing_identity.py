@@ -18,6 +18,7 @@ from quest_renamer.infrastructure.process_runner import ProcessRunner
 @dataclass(frozen=True, slots=True)
 class SigningIdentity:
     keystore: Path
+    metadata: Path
     alias: str
     password: str
 
@@ -115,7 +116,7 @@ class SigningIdentityStore:
         )
         os.replace(temporary, metadata)
         self._restrict_permissions(keystore, metadata)
-        return SigningIdentity(keystore, alias, password)
+        return SigningIdentity(keystore, metadata, alias, password)
 
     def _paths_for_dname(self, dname: str | None) -> tuple[Path, Path]:
         if not dname or dname == DEFAULT_KEY_DNAME:
@@ -126,6 +127,13 @@ class SigningIdentityStore:
             lineage_root / f"signing-{digest}.p12",
             lineage_root / f"signing-{digest}.json",
         )
+
+    def load_existing(self, keystore: Path, metadata: Path) -> SigningIdentity:
+        if not keystore.is_file() or not metadata.is_file():
+            raise SigningIdentityError(
+                "The saved signing key is incomplete. Restore its key and JSON files."
+            )
+        return self._load(keystore, metadata)
 
     def _load(self, keystore: Path, metadata: Path) -> SigningIdentity:
         try:
@@ -144,7 +152,7 @@ class SigningIdentityStore:
         ):
             raise SigningIdentityError("The signing identity metadata is incomplete.")
         self._restrict_permissions(keystore, metadata)
-        return SigningIdentity(keystore, alias, password)
+        return SigningIdentity(keystore, metadata, alias, password)
 
     @staticmethod
     def _restrict_permissions(*paths: Path) -> None:

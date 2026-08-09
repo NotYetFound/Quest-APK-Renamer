@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import tempfile
@@ -41,6 +42,16 @@ from quest_renamer.infrastructure.toolchain import Toolchain
 
 ProgressCallback = Callable[[float, str], None]
 LogCallback = Callable[[str], None]
+
+
+def _format_bytes(value: int) -> str:
+    amount = float(max(0, value))
+    units = ("B", "KB", "MB", "GB", "TB")
+    for unit in units:
+        if amount < 1024 or unit == units[-1]:
+            return f"{amount:.0f} {unit}" if unit == "B" else f"{amount:.1f} {unit}"
+        amount /= 1024
+    return f"{amount:.1f} TB"
 
 
 def _unique_recovery_path(source: Path, label: str = "Original Backup") -> Path:
@@ -231,6 +242,7 @@ class StagedApkBuildEngine:
                             "Android files."
                         )
                 if PATCH_ID in request.patches:
+                    progress(0.34, "Applying older-firmware compatibility patch")
                     apply_older_firmware_patch(
                         decoded,
                         self.older_firmware_asset,
@@ -258,6 +270,7 @@ class StagedApkBuildEngine:
                     raise BuildError("Apktool completed but did not produce a rebuilt APK.")
 
                 built_apk = unsigned
+                signing_identity = None
                 if request.sign_apk:
                     progress(0.63, "Preparing signing identity")
                     previous_signer = describe_previous_signer(request.source.signer_identity)
@@ -275,11 +288,28 @@ class StagedApkBuildEngine:
                             f"previously signed by {previous_signer[0]} "
                             f"({previous_signer[1]})."
                         )
-                    identity = SigningIdentityStore(
+                    identity_store = SigningIdentityStore(
                         self.signing_root,
                         self.toolchain.keytool,
                         self.runner,
-                    ).load_or_create(token=token, log=log, dname=signing_dname)
+                    )
+                    if request.signing_keystore and request.signing_metadata:
+                        identity = identity_store.load_existing(
+                            request.signing_keystore,
+                            request.signing_metadata,
+                        )
+                        log(f"Reusing saved signing key: {identity.keystore.name}")
+                    elif request.signing_keystore or request.signing_metadata:
+                        raise BuildError(
+                            "The saved signing identity is incomplete. Restore both key files."
+                        )
+                    else:
+                        identity = identity_store.load_or_create(
+                            token=token,
+                            log=log,
+                            dname=signing_dname,
+                        )
+                    signing_identity = identity
                     signed.mkdir()
                     progress(0.67, "Signing and aligning APK")
                     self.runner.run(
@@ -327,7 +357,15 @@ class StagedApkBuildEngine:
 
                 progress(0.83, "Saving APK")
                 apk_output = staging / f"{request.package_name}.apk"
-                copy_file(built_apk, apk_output, token=token)
+
+                def report_apk_copy(copied: int, total: int) -> None:
+                    fraction = copied / total if total else 1.0
+                    progress(
+                        0.83 + fraction * 0.02,
+                        f"Saving APK • {_format_bytes(copied)} of {_format_bytes(total)}",
+                    )
+
+                copy_file(built_apk, apk_output, token=token, progress=report_apk_copy)
 
                 obb_outputs: list[Path] = []
                 if request.copy_obbs and request.source.obbs:
@@ -348,7 +386,9 @@ class StagedApkBuildEngine:
                             )
                             progress(
                                 0.85 + fraction * 0.10,
-                                f"Copying OBB {item_index} of {len(request.source.obbs)}",
+                                f"Copying OBB {item_index} of {len(request.source.obbs)} • "
+                                f"{_format_bytes(base_bytes + copied)} of "
+                                f"{_format_bytes(total_bytes)}",
                             )
 
                         copy_file(
@@ -404,6 +444,13 @@ class StagedApkBuildEngine:
                 rewrite,
                 recovery,
                 output / "RENAME-REPORT.txt",
+                signing_identity.keystore if signing_identity else None,
+                signing_identity.metadata if signing_identity else None,
+                (
+                    hashlib.sha256(signing_identity.keystore.read_bytes()).hexdigest()
+                    if signing_identity
+                    else ""
+                ),
             )
         except OperationCancelled:
             partial = staging if any(staging.iterdir()) else None

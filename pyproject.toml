@@ -36,6 +36,7 @@ where = ["src"]
 quest_renamer = [
   "qml/*.qml",
   "assets/*.svg",
+  "assets/*.txt",
   "assets/patches/**/*.md",
   "assets/patches/**/*.so",
   "resources/*.json",

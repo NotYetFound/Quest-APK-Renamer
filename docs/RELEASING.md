@@ -81,6 +81,16 @@ On a Linux x86_64 computer:
 
 ## 3. Review release materials
 
+Regenerate a clean screenshot from the real QML with isolated app data when needed:
+
+```bash
+QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software \
+  XDG_DATA_HOME=/tmp/qar-release-data XDG_CACHE_HOME=/tmp/qar-release-cache \
+  quest-renamer --capture-screenshot docs/screenshots/dashboard.png --screenshot-page 0
+```
+
+Page numbers are Dashboard `0`, Library `1`, Bulk `2`, APK Inspector `3`, and Settings `4`.
+
 - Confirm all screenshots match the current UI.
 - Confirm no screenshot or log contains private paths, serials, or game data.
 - Check `THIRD_PARTY_NOTICES.md` against packaged dependency versions.
@@ -111,25 +121,25 @@ four platform artifacts without publishing a release. After those exact files
 pass the checks above, create the stable tag:
 
 ```bash
-git tag -a v1.4.0 -m "Quest APK Renamer 1.4.0"
-git push origin v1.4.0
+git tag -a v1.4.4 -m "Quest APK Renamer 1.4.4"
+git push origin v1.4.4
 ```
 
 The release workflows build:
 
-- `Quest-APK-Renamer-1.4.0-Windows-portable.zip`;
-- `Quest-APK-Renamer-1.4.0-Setup.exe`;
-- `Quest-APK-Renamer-1.4.0-macOS-arm64.dmg`;
-- `Quest-APK-Renamer-1.4.0-macOS-x86_64.dmg`;
-- `Quest-APK-Renamer-1.4.0-Linux-x86_64.tar.gz`; and
-- `Quest-APK-Renamer-1.4.0-x86_64.AppImage`.
+- `Quest-APK-Renamer-1.4.4-Windows-portable.zip`;
+- `Quest-APK-Renamer-1.4.4-Setup.exe`;
+- `Quest-APK-Renamer-1.4.4-macOS-arm64.dmg`;
+- `Quest-APK-Renamer-1.4.4-macOS-x86_64.dmg`;
+- `Quest-APK-Renamer-1.4.4-Linux-x86_64.tar.gz`; and
+- `Quest-APK-Renamer-1.4.4-x86_64.AppImage`.
 
 GitHub displays a copyable SHA-256 digest beside every uploaded release asset.
 
 A `v*` tag creates a GitHub release automatically. A tag may match the app
-version exactly or add a prerelease suffix. For example, app version `1.4.0`
-accepts `v1.4.0` or `v1.4.0-beta.1`. Tags containing a hyphen are marked as
-prereleases. Create the stable `v1.4.0` tag only after the candidate Windows,
+version exactly or add a prerelease suffix. For example, app version `1.4.4`
+accepts `v1.4.4` or `v1.4.4-beta.1`. Tags containing a hyphen are marked as
+prereleases. Create the stable `v1.4.4` tag only after the candidate Windows,
 macOS, and Linux packages pass their complete desktop and Quest smoke tests.
 
 ## 5. Before publishing

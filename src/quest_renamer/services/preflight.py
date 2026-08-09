@@ -122,7 +122,7 @@ class AutomaticPreflight:
             output_problem = "The output folder cannot be inside the source folder."
         elif _same_or_inside(source_root, output):
             output_problem = "The output folder cannot contain the source folder."
-        elif output.exists() and any(output.iterdir()):
+        elif output.exists() and (not output.is_dir() or any(output.iterdir())):
             output_problem = "The output folder already exists and is not empty."
         checks.append(
             ReadinessCheck(
