@@ -41,9 +41,19 @@ def copy_file(
 
 def obb_destination(source: Path, request: BuildRequest, output_root: Path) -> Path:
     match = OBB_NAME.match(source.name)
-    kind = match.group(1).lower() if match else "main"
-    version = request.source.version_code or (match.group(2) if match else "1")
-    return output_root / request.package_name / f"{kind}.{version}.{request.package_name}.obb"
+    if match:
+        kind = match.group(1).lower()
+        version = request.source.version_code or match.group(2)
+        name = f"{kind}.{version}.{request.package_name}.obb"
+    else:
+        # Files that do not embed the package name (asset packs, split data
+        # files that large games ship alongside the main/patch OBB) must keep
+        # their original filename: the game locates them by that exact name, and
+        # forcing them all to "main.<version>.<package>.obb" would collapse every
+        # one onto a single destination, overwriting the others so only the last
+        # survives.
+        name = source.name
+    return output_root / request.package_name / name
 
 
 def write_release_manifest(

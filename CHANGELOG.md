@@ -4,6 +4,14 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- Large games whose OBB folder holds several `.obb` files (asset packs or split data alongside the
+  main/patch OBB) now copy every file instead of collapsing them onto a single
+  `main.<version>.<package>.obb` destination. OBB files that do not embed the package name keep
+  their original filename, so all of them are preserved and transferred rather than overwriting
+  each other so only one survived.
+
 ## [1.4.4] - 2026-08-08
 
 ### Added
