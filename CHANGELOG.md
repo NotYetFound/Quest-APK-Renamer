@@ -6,11 +6,14 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ### Fixed
 
-- Large games whose OBB folder holds several `.obb` files (asset packs or split data alongside the
-  main/patch OBB) now copy every file instead of collapsing them onto a single
-  `main.<version>.<package>.obb` destination. OBB files that do not embed the package name keep
-  their original filename, so all of them are preserved and transferred rather than overwriting
-  each other so only one survived.
+- Large Unreal titles such as Asgard's Wrath 2 split their data across dozens of OBB files whose
+  name tag is a pak-chunk label (`patch.pakchunk0-Android_ASTC.<package>.obb`) rather than a
+  numeric version. The renamer only recognised a numeric tag, so every pak-chunk file collapsed
+  onto a single `main.<version>.<package>.obb` destination and all but one were lost. Expansion
+  OBBs are now matched by structure, so only the package segment is rewritten while the version or
+  pak-chunk tag is preserved exactly, and every file keeps its distinct name and is copied and
+  transferred. Files that carry no package name (asset packs, the release manifest) are copied
+  through unchanged.
 
 ## [1.4.4] - 2026-08-08
 

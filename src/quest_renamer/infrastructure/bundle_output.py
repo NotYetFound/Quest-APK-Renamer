@@ -16,7 +16,13 @@ from quest_renamer.domain.build import PackageRewriteReport
 from quest_renamer.domain.models import BuildRequest
 from quest_renamer.domain.operations import CancellationToken
 
-OBB_NAME = re.compile(r"^(main|patch)\.(\d+)\.(.+)\.obb$", re.IGNORECASE)
+# Expansion OBB filenames are "<main|patch>.<tag>.<package>.obb". The tag is a
+# single dot-free segment that is usually the numeric version code, but large
+# Unreal titles (e.g. Asgard's Wrath 2) ship dozens of split OBBs whose tag is a
+# pak-chunk label such as "pakchunk0-Android_ASTC". Matching the tag as \d+ made
+# every one of those files fail the pattern and collapse onto a single
+# "main.<version>.<package>.obb" destination; [^.]+ keeps each chunk distinct.
+OBB_NAME = re.compile(r"^(main|patch)\.([^.]+)\.(.+)\.obb$", re.IGNORECASE)
 
 
 def copy_file(
@@ -43,15 +49,15 @@ def obb_destination(source: Path, request: BuildRequest, output_root: Path) -> P
     match = OBB_NAME.match(source.name)
     if match:
         kind = match.group(1).lower()
-        version = request.source.version_code or match.group(2)
-        name = f"{kind}.{version}.{request.package_name}.obb"
+        # Rewrite only the package segment; keep the tag (numeric version or a
+        # pak-chunk label) exactly as shipped so the game still locates each
+        # OBB, and so distinct chunks stay distinct instead of collapsing.
+        tag = match.group(2)
+        name = f"{kind}.{tag}.{request.package_name}.obb"
     else:
-        # Files that do not embed the package name (asset packs, split data
-        # files that large games ship alongside the main/patch OBB) must keep
-        # their original filename: the game locates them by that exact name, and
-        # forcing them all to "main.<version>.<package>.obb" would collapse every
-        # one onto a single destination, overwriting the others so only the last
-        # survives.
+        # Files that do not follow the expansion scheme (asset packs, the
+        # release manifest) carry no package name and are copied through
+        # unchanged so the folder stays complete.
         name = source.name
     return output_root / request.package_name / name
 
