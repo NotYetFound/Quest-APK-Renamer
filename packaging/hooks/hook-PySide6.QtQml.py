@@ -17,6 +17,7 @@ qml_binaries, qml_datas = pyside6_library_info.collect_qtqml_files()
 
 _QML_ROOT = PurePosixPath(pyside6_library_info.qt_rel_dir) / "qml"
 _EXACT_MODULES = (
+    PurePosixPath("QtCore"),  # Settings (window geometry, last page)
     PurePosixPath("QtQml"),
     PurePosixPath("QtQuick"),
     PurePosixPath("QtQuick/Controls"),

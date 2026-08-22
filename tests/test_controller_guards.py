@@ -116,12 +116,12 @@ class ControllerGuardTests(unittest.TestCase):
             second = self._finished_folder(root, "second")
             controller = AppController(paths=AppPaths(data=root / "data", cache=root / "cache"))
             controller.chooseFolder(QUrl.fromLocalFile(str(first)))
-            self.assertEqual(controller.folderPath, str(first))
+            self.assertEqual(Path(controller.folderPath).resolve(), first.resolve())
 
             controller._build_state = "running"
             controller.chooseFolder(QUrl.fromLocalFile(str(second)))
 
-            self.assertEqual(controller.folderPath, str(first))
+            self.assertEqual(Path(controller.folderPath).resolve(), first.resolve())
             self.assertIn("Wait for the current operation", controller.notice)
 
     @unittest.skipUnless(hasattr(os, "symlink"), "symlinks unsupported")
@@ -247,8 +247,10 @@ class ControllerGuardTests(unittest.TestCase):
 
             controller.chooseFolder(QUrl.fromLocalFile(str(folder)))
 
-            self.assertEqual(controller.lastSourceFolder, str(root))
-            self.assertEqual(store.load().last_source_folder, str(root))
+            # Temp roots may be reported through symlinks (/private/var) or short
+            # names (RUNNER~1); compare resolved paths.
+            self.assertEqual(Path(controller.lastSourceFolder).resolve(), root.resolve())
+            self.assertEqual(Path(store.load().last_source_folder).resolve(), root.resolve())
 
     def test_copy_text_and_open_helpers_are_safe_without_a_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -320,7 +322,7 @@ class BulkGuardTests(unittest.TestCase):
             controller.copyDetail(0)
             self.assertTrue(copied and "safety deadline" in copied[0])
             controller.openOutput(0)
-            self.assertEqual(opened, [parent / "First"])
+            self.assertEqual([path.resolve() for path in opened], [(parent / "First").resolve()])
 
     def test_disconnecting_the_headset_skips_the_remaining_queue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
