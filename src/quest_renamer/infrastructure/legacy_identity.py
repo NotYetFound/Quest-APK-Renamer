@@ -12,6 +12,7 @@ from pathlib import Path
 
 from quest_renamer.domain.operations import CancellationToken
 from quest_renamer.infrastructure.process_runner import CommandFailed, ProcessRunner
+from quest_renamer.infrastructure.signing_identity import AUXILIARY_SIGNING_ENTRIES
 
 LEGACY_KEYSTORE_NAME = "quest-renamer-signing-key.jks"
 LEGACY_METADATA_NAME = "signing-key.json"
@@ -40,9 +41,13 @@ def migrate_legacy_signing_identity(
     if destination_key.is_file() and destination_metadata.is_file():
         return False
     if signing_root.exists():
-        entries = tuple(signing_root.iterdir())
         error_marker = signing_root / MIGRATION_ERROR_NAME
-        if entries and entries != (error_marker,):
+        entries = tuple(
+            entry
+            for entry in signing_root.iterdir()
+            if entry.name not in AUXILIARY_SIGNING_ENTRIES and entry != error_marker
+        )
+        if entries:
             return False
         error_marker.unlink(missing_ok=True)
 

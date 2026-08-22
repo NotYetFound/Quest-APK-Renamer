@@ -98,7 +98,16 @@ class BundleInstaller(Protocol):
         token: CancellationToken | None = None,
         progress: ProgressCallback | None = None,
         log: Callable[[str], None] | None = None,
+        keep_obb_names: tuple[str, ...] = (),
     ) -> BundleInstallResult: ...
+
+    def uninstall_package(
+        self,
+        package_name: str,
+        serial: str,
+        *,
+        log: Callable[[str], None] | None = None,
+    ) -> None: ...
 
 
 class SigningManager(Protocol):
@@ -126,6 +135,18 @@ class SigningManager(Protocol):
 
 class DeviceMonitor(Protocol):
     def snapshot(self) -> DeviceSnapshot: ...
+
+
+class WirelessDeviceService(DeviceMonitor, Protocol):
+    """Optional extras for monitors that can pick devices and manage Wi-Fi ADB."""
+
+    def set_preferred_serial(self, serial: str) -> None: ...
+
+    def connect_wireless(self, address: str) -> str: ...
+
+    def disconnect_wireless(self, address: str) -> str: ...
+
+    def enable_wireless(self, serial: str, *, port: int = 5555) -> str: ...
 
 
 class DeviceService(DeviceMonitor, Protocol):

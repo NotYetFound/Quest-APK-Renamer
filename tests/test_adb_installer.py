@@ -43,9 +43,11 @@ class MemoryQuestRunner:
         install_success: bool = True,
         package_verify_success: bool = True,
         corrupt_obb_after_install: bool = False,
+        install_failure_line: str = "",
     ) -> None:
         self.remote = remote
         self.install_success = install_success
+        self.install_failure_line = install_failure_line
         self.package_verify_success = package_verify_success
         self.corrupt_obb_after_install = corrupt_obb_after_install
         self.commands: list[tuple[str, ...]] = []
@@ -62,22 +64,40 @@ class MemoryQuestRunner:
                 for path in tuple(self.remote):
                     if path.endswith(".obb") and ".qar-" not in path:
                         self.remote[path] += b"corrupt"
-            output = ("Success",) if self.install_success else ("Failure [INSTALL_FAILED]",)
-            return CommandResult(command, 0, output)
+            output = (
+                ("Success",)
+                if self.install_success
+                else (self.install_failure_line or "Failure [INSTALL_FAILED]",)
+            )
+            return CommandResult(command, 0 if self.install_success else 1, output)
         if "pm" in command and "path" in command:
             return (
                 CommandResult(command, 0, ("package:/data/app/example/base.apk",))
                 if self.package_verify_success
                 else CommandResult(command, 1, ())
             )
-        if "ls" in command and "-1" in command:
+        if "ls" in command and any(arg.startswith("-1") for arg in command):
             root = command[-1].rstrip("/") + "/"
+            show_hidden = any(arg.startswith("-1") and "a" in arg for arg in command)
             names = sorted(
                 path.removeprefix(root)
                 for path in self.remote
-                if path.startswith(root) and "/" not in path.removeprefix(root)
+                if path.startswith(root)
+                and "/" not in path.removeprefix(root)
+                and (show_hidden or not path.removeprefix(root).startswith("."))
             )
             return CommandResult(command, 0, tuple(names))
+        if "stat" in command and command[-1].endswith("/*"):
+            # Batched listing: ``stat -c %s:%n dir/*`` expanded by the remote shell.
+            root = command[-1][:-1]
+            rows = tuple(
+                f"{len(data)}:{path}"
+                for path, data in sorted(self.remote.items())
+                if path.startswith(root)
+                and "/" not in path.removeprefix(root)
+                and not path.removeprefix(root).startswith(".")
+            )
+            return CommandResult(command, 0 if rows else 1, rows)
         if "stat" in command:
             data = self.remote.get(command[-1])
             return (
@@ -99,8 +119,11 @@ class MemoryQuestRunner:
                 self.remote[destination] = self.remote.pop(source)
             return CommandResult(command, 0, ())
         if "rm" in command and "-f" in command:
-            self.remote.pop(command[-1], None)
+            for path in command[command.index("-f") + 1 :]:
+                self.remote.pop(path, None)
             return CommandResult(command, 0, ())
+        if "uninstall" in command:
+            return CommandResult(command, 0, ("Success",))
         return CommandResult(command, 0, ())
 
 
@@ -399,6 +422,170 @@ class AdbInstallerTests(unittest.TestCase):
             self.assertEqual(first, second)
             self.assertNotEqual(first, changed)
             self.assertEqual(sha256.call_count, 2)
+
+
+class InstallSafetyTests(unittest.TestCase):
+    def _bundle_files(self, root: Path, *obb_names: str) -> tuple[Path, tuple[Path, ...]]:
+        adb = root / "adb"
+        adb.touch()
+        apk = root / "game.apk"
+        apk.write_bytes(b"apk")
+        obbs = []
+        for name in obb_names:
+            obb = root / name
+            obb.write_bytes(f"data for {name}".encode())
+            obbs.append(obb)
+        return adb, tuple(obbs)
+
+    def test_apk_only_install_leaves_existing_quest_obbs_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb, _ = self._bundle_files(root)
+            remote_root = "/sdcard/Android/obb/com.example.game"
+            runner = MemoryQuestRunner(
+                {
+                    f"{remote_root}/main.47.com.example.game.obb": b"keep me",
+                    f"{remote_root}/patch.47.com.example.game.obb": b"keep me too",
+                }
+            )
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, root / "game.apk", package_name="com.example.game")
+
+            with patch.dict("os.environ", {"QAR_ADB": str(adb)}):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            self.assertEqual(len(runner.remote), 2)
+            self.assertIn(f"{remote_root}/main.47.com.example.game.obb", runner.remote)
+
+    def test_obb_retry_only_prunes_outside_the_kept_set(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb, obbs = self._bundle_files(
+                root, "main.48.com.example.game.obb", "patch.48.com.example.game.obb"
+            )
+            remote_root = "/sdcard/Android/obb/com.example.game"
+            runner = MemoryQuestRunner(
+                {
+                    f"{remote_root}/patch.48.com.example.game.obb": obbs[1].read_bytes(),
+                    f"{remote_root}/main.40.com.example.game.obb": b"obsolete",
+                }
+            )
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            retry_bundle = BundleDraft(
+                root, root / "game.apk", (obbs[0],), package_name="com.example.game"
+            )
+
+            with patch.dict("os.environ", {"QAR_ADB": str(adb)}):
+                installer.retry_obbs(
+                    retry_bundle,
+                    "QUEST123",
+                    keep_obb_names=tuple(obb.name for obb in obbs),
+                )
+
+            self.assertIn(f"{remote_root}/main.48.com.example.game.obb", runner.remote)
+            self.assertIn(f"{remote_root}/patch.48.com.example.game.obb", runner.remote)
+            self.assertNotIn(f"{remote_root}/main.40.com.example.game.obb", runner.remote)
+
+    def test_obb_retry_without_kept_set_never_prunes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb, obbs = self._bundle_files(root, "main.48.com.example.game.obb")
+            remote_root = "/sdcard/Android/obb/com.example.game"
+            runner = MemoryQuestRunner(
+                {f"{remote_root}/patch.48.com.example.game.obb": b"other file"}
+            )
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, root / "game.apk", obbs, package_name="com.example.game")
+
+            with patch.dict("os.environ", {"QAR_ADB": str(adb)}):
+                installer.retry_obbs(bundle, "QUEST123")
+
+            self.assertIn(f"{remote_root}/patch.48.com.example.game.obb", runner.remote)
+            self.assertIn(f"{remote_root}/main.48.com.example.game.obb", runner.remote)
+
+    def test_install_failures_are_classified_for_the_user(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb, _ = self._bundle_files(root)
+            runner = MemoryQuestRunner(
+                {},
+                install_success=False,
+                install_failure_line=(
+                    "Failure [INSTALL_FAILED_UPDATE_INCOMPATIBLE: Existing package "
+                    "signatures do not match newer version]"
+                ),
+            )
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, root / "game.apk", package_name="com.example.game")
+
+            with (
+                patch.dict("os.environ", {"QAR_ADB": str(adb)}),
+                self.assertRaises(BundleInstallError) as raised,
+            ):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            self.assertIn("different key", str(raised.exception))
+            self.assertFalse(raised.exception.apk_installed)
+
+    def test_same_size_remote_obbs_are_hashed_once_each(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb, obbs = self._bundle_files(
+                root,
+                "main.50.com.example.game.obb",
+                "patch.50.com.example.game.obb",
+            )
+            remote_root = "/sdcard/Android/obb/com.example.game"
+            same_size = b"x" * len(obbs[0].read_bytes())
+            runner = MemoryQuestRunner(
+                {
+                    f"{remote_root}/main.49.com.example.game.obb": same_size,
+                    f"{remote_root}/patch.49.com.example.game.obb": same_size,
+                    f"{remote_root}/other.49.com.example.game.obb": same_size,
+                }
+            )
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, root / "game.apk", obbs, package_name="com.example.game")
+
+            with patch.dict("os.environ", {"QAR_ADB": str(adb)}):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            hashed = [command[-1] for command in runner.commands if "sha256sum" in command]
+            self.assertEqual(len(hashed), len(set(hashed)))
+
+    def test_stale_staging_files_are_removed_even_though_they_are_hidden(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb, obbs = self._bundle_files(root, "main.51.com.example.game.obb")
+            remote_root = "/sdcard/Android/obb/com.example.game"
+            stale = f"{remote_root}/.qar-new-0123456789ab-1-main.51.com.example.game.obb"
+            runner = MemoryQuestRunner({stale: b"left over"})
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, root / "game.apk", obbs, package_name="com.example.game")
+
+            with patch.dict("os.environ", {"QAR_ADB": str(adb)}):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            self.assertNotIn(stale, runner.remote)
+            listing = [command for command in runner.commands if "ls" in command]
+            self.assertTrue(any("-1a" in command for command in listing))
+
+    def test_post_install_verification_failure_reports_apk_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb, obbs = self._bundle_files(root, "main.52.com.example.game.obb")
+            runner = MemoryQuestRunner({}, corrupt_obb_after_install=True)
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, root / "game.apk", obbs, package_name="com.example.game")
+
+            with (
+                patch.dict("os.environ", {"QAR_ADB": str(adb)}),
+                self.assertRaises(BundleInstallError) as raised,
+            ):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            self.assertTrue(raised.exception.apk_installed)
+            self.assertEqual(raised.exception.failed_obbs, obbs)
 
 
 if __name__ == "__main__":

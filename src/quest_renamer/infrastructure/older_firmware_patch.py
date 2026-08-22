@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from quest_renamer.domain.operations import CancellationToken
+from quest_renamer.infrastructure.toolchain import sha256_file
 
 PATCH_ID = "older-firmware-compatibility"
 LOADER_RELATIVE = Path("lib/arm64-v8a/libovrplatformloader.so")
@@ -21,14 +22,10 @@ class OlderFirmwarePatchError(RuntimeError):
 def verified_older_firmware_asset(path: Path | None) -> Path | None:
     if path is None or not path.is_file():
         return None
-    digest = hashlib.sha256()
     try:
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
+        return path if sha256_file(path) == LOADER_SHA256 else None
     except OSError:
         return None
-    return path if digest.hexdigest() == LOADER_SHA256 else None
 
 
 def _sha256(path: Path, token: CancellationToken) -> str:

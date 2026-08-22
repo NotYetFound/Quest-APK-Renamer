@@ -10,12 +10,17 @@ from collections.abc import Callable, Mapping
 from contextlib import closing, suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar, Protocol, cast
-from urllib.request import Request
+from typing import TYPE_CHECKING, ClassVar, Protocol, cast
 
 from quest_renamer.domain.operations import CancellationToken
-from quest_renamer.infrastructure.toolchain import ToolArtifact, load_tool_catalog
-from quest_renamer.infrastructure.trusted_https import trusted_urlopen
+from quest_renamer.infrastructure.toolchain import (
+    ToolArtifact,
+    load_tool_catalog,
+    sha256_file,
+)
+
+if TYPE_CHECKING:
+    from urllib.request import Request
 
 ProgressCallback = Callable[[float, str], None]
 LogCallback = Callable[[str], None]
@@ -28,7 +33,7 @@ class DownloadResponse(Protocol):
     def close(self) -> None: ...
 
 
-DownloadOpener = Callable[[Request, float], DownloadResponse]
+DownloadOpener = Callable[["Request", float], DownloadResponse]
 
 
 class ToolRepairError(RuntimeError):
@@ -61,6 +66,8 @@ class ToolRepairResult:
 
 
 def _default_open(request: Request, timeout: float) -> DownloadResponse:
+    from quest_renamer.infrastructure.trusted_https import trusted_urlopen
+
     return cast(DownloadResponse, trusted_urlopen(request, timeout))
 
 
@@ -113,11 +120,10 @@ class PinnedToolManager:
     def _matches(path: Path, artifact: ToolArtifact) -> bool:
         if not path.is_file():
             return False
-        digest = hashlib.sha256()
-        with path.open("rb") as handle:
-            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                digest.update(chunk)
-        return digest.hexdigest() == artifact.sha256
+        try:
+            return sha256_file(path) == artifact.sha256
+        except OSError:
+            return False
 
     def inspect(self) -> ToolSnapshot:
         states: list[ToolFileState] = []
@@ -209,6 +215,8 @@ class PinnedToolManager:
         progress: ProgressCallback,
         label: str,
     ) -> None:
+        from urllib.request import Request
+
         request = Request(
             artifact.url,
             headers={"User-Agent": "Quest-APK-Renamer tool-repair"},

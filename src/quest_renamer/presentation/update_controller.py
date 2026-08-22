@@ -112,7 +112,7 @@ class UpdateController(QObject):
     def _worker(self) -> None:
         try:
             outcome = UpdateOutcome(result=self._checker.check())
-        except (OSError, ValueError) as exc:
+        except Exception as exc:  # any failure must release the busy flag
             outcome = UpdateOutcome(error=str(exc))
         self.outcomeReady.emit(outcome)
 

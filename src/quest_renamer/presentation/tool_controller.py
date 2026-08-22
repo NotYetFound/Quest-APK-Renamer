@@ -25,6 +25,9 @@ class ToolRepairOutcome:
 
 class ToolController(QObject):
     changed = Signal()
+    # Emitted only when the tool snapshot itself changes, so QML row lists are not
+    # rebuilt on every progress tick.
+    snapshotChanged = Signal()
     busyChanged = Signal()
     progressReady = Signal(float, str)
     outcomeReady = Signal(object)
@@ -74,7 +77,7 @@ class ToolController(QObject):
     def isBusy(self) -> bool:
         return self._busy
 
-    @Property(bool, notify=changed)
+    @Property(bool, notify=snapshotChanged)
     def allReady(self) -> bool:
         return self._snapshot.all_ready
 
@@ -96,7 +99,7 @@ class ToolController(QObject):
             return "Cancel"
         return "Verify again" if self._snapshot.all_ready else "Repair tools"
 
-    @Property(list, notify=changed)
+    @Property(list, notify=snapshotChanged)
     def toolRows(self) -> list[dict[str, str]]:
         return [
             {
@@ -153,7 +156,7 @@ class ToolController(QObject):
             outcome = ToolRepairOutcome(result=result)
         except OperationCancelled:
             outcome = ToolRepairOutcome(cancelled=True)
-        except (OSError, ValueError, RuntimeError) as exc:
+        except Exception as exc:  # any failure must release the busy flag
             outcome = ToolRepairOutcome(error=str(exc))
         self.outcomeReady.emit(outcome)
 
@@ -171,6 +174,7 @@ class ToolController(QObject):
         self._busy = False
         try:
             self._snapshot = self._manager.inspect()
+            self.snapshotChanged.emit()
         except (OSError, ValueError) as exc:
             self._status = f"Tool status could not be read: {exc}"
             self._tone = "error"

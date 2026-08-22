@@ -28,8 +28,12 @@ class BundleInstallError(RuntimeError):
         message: str,
         *,
         failed_obbs: tuple[Path, ...] = (),
+        apk_installed: bool = False,
     ) -> None:
         self.failed_obbs = failed_obbs
+        # True when the APK was already installed before the failure, so only the
+        # OBB files need to be retried; False means the whole install must rerun.
+        self.apk_installed = apk_installed
         super().__init__(message)
 
 

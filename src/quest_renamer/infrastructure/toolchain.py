@@ -39,12 +39,32 @@ class Toolchain:
         return self.analysis_ready and self.keytool is not None and self.signer is not None
 
 
+_DIGEST_CACHE: dict[tuple[str, int, int], str] = {}
+
+
 def sha256_file(path: Path) -> str:
+    """SHA-256 of a file, memoized on (path, size, mtime) for this process.
+
+    The bundled JARs and loader are verified by several components at startup;
+    hashing ~40 MB once instead of three times keeps the first window fast.
+    """
+    try:
+        stat = path.stat()
+        key = (os.path.normcase(str(path.resolve())), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        key = None
+    if key is not None and (cached := _DIGEST_CACHE.get(key)) is not None:
+        return cached
     digest = hashlib.sha256()
     with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+        for chunk in iter(lambda: handle.read(4 * 1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+    value = digest.hexdigest()
+    if key is not None:
+        if len(_DIGEST_CACHE) > 64:
+            _DIGEST_CACHE.clear()
+        _DIGEST_CACHE[key] = value
+    return value
 
 
 def load_tool_catalog(path: Path) -> dict[str, ToolArtifact]:

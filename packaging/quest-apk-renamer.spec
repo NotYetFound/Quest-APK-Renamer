@@ -88,11 +88,25 @@ def normalized_toc_name(entry):
 # remove development-only QML tooling. Qt translations are not loaded because
 # all application text is authored in English and native file dialogs get their
 # labels from the OS.
+# The app only decodes SVG/PNG/WebP/JPEG icons; the PDF module and the exotic
+# image plugins are never loaded but would still be read at startup.
+UNUSED_BINARY_MARKERS = (
+    "/imageformats/libqtiff",
+    "/imageformats/libqgif",
+    "/imageformats/libqicns",
+    "/imageformats/libqico",
+    "/imageformats/libqtga",
+    "/imageformats/libqwbmp",
+    "/imageformats/libqpdf",
+    "/qmltooling/",
+    "libQt6Pdf.",
+    "libQt6PdfQuick.",
+    "libQt6VirtualKeyboard",
+)
 a.binaries = TOC(
     entry
     for entry in a.binaries
-    if "/imageformats/libqtiff" not in normalized_toc_name(entry)
-    and "/qmltooling/" not in normalized_toc_name(entry)
+    if not any(marker in normalized_toc_name(entry) for marker in UNUSED_BINARY_MARKERS)
 )
 a.datas = TOC(
     entry

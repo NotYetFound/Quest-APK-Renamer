@@ -29,10 +29,26 @@ class ActivityLog:
         self._lock = threading.Lock()
 
     def tail(self) -> tuple[str, ...]:
+        """Return the last ``max_view_lines`` lines without reading the whole file."""
         try:
-            lines = self.path.read_text(encoding="utf-8", errors="replace").splitlines()
+            with self.path.open("rb") as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                window = 64 * 1024
+                data = b""
+                # Read backwards in growing windows until enough lines are present.
+                while size > 0 and data.count(b"\n") <= self.max_view_lines:
+                    read_from = max(0, size - window)
+                    handle.seek(read_from)
+                    data = handle.read(size - read_from) + data
+                    size = read_from
+                    window *= 2
         except OSError:
             return ()
+        lines = data.decode("utf-8", errors="replace").splitlines()
+        if size > 0 and lines:
+            # The first line is probably a partial line from the middle of the file.
+            lines = lines[1:]
         return tuple(lines[-self.max_view_lines :])
 
     def append(self, message: str) -> str:

@@ -60,7 +60,10 @@ def write_release_manifest(
     output_root: Path,
     apk: Path,
     obbs: tuple[Path, ...],
+    *,
+    release_name: str = "",
 ) -> Path:
+    """Write ``release.manifest``; ``release_name`` is the final visible folder name."""
     total_size = apk.stat().st_size + sum(path.stat().st_size for path in obbs)
     updated = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
     rows = [
@@ -78,7 +81,7 @@ def write_release_manifest(
         ],
         [
             request.source.game_name or request.package_name,
-            output_root.name,
+            release_name or output_root.name,
             request.package_name,
             request.source.version_code or "1",
             updated,

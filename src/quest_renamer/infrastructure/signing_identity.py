@@ -29,6 +29,50 @@ class SigningIdentityError(RuntimeError):
 
 DEFAULT_KEY_DNAME = "CN=Quest APK Renamer, OU=Local Build, O=Local, L=Local, ST=Local, C=US"
 LINEAGE_KEY_DIR_NAME = "lineage-keys"
+KEYSTORE_NAME = "quest-renamer.p12"
+METADATA_NAME = "identity.json"
+MIGRATION_ERROR_NAME = "legacy-migration-error.txt"
+# Folders and files the app itself writes next to the identity; their presence
+# never means a key pair is damaged or half-migrated.
+AUXILIARY_SIGNING_ENTRIES = frozenset(
+    {
+        LINEAGE_KEY_DIR_NAME,
+        "app-icons",
+        "imported-identities",
+        "backup-status.json",
+        "backup-status.tmp",
+        ".DS_Store",
+        "Thumbs.db",
+    }
+)
+
+
+def signing_identity_is_incomplete(root: Path) -> bool:
+    """True when ``root`` holds a partial identity or a failed migration marker.
+
+    A missing identity (no key, no metadata) is not incomplete — it is simply not
+    created yet — unless the folder also holds a migration error or stray key-like
+    files that the app did not create itself.
+    """
+    keystore = root / KEYSTORE_NAME
+    metadata = root / METADATA_NAME
+    if keystore.is_file() and metadata.is_file():
+        return False
+    if keystore.exists() or metadata.exists():
+        return True
+    if not root.is_dir():
+        return False
+    try:
+        for entry in root.iterdir():
+            if entry.name in AUXILIARY_SIGNING_ENTRIES:
+                continue
+            if entry.name.startswith(".") and entry.is_dir():
+                # Staging folders from interrupted restores are cleaned separately.
+                continue
+            return True
+    except OSError:
+        return False
+    return False
 
 
 class SigningIdentityStore:
@@ -36,8 +80,8 @@ class SigningIdentityStore:
         self.root = root
         self.keytool = keytool
         self.runner = runner or ProcessRunner()
-        self.keystore = root / "quest-renamer.p12"
-        self.metadata = root / "identity.json"
+        self.keystore = root / KEYSTORE_NAME
+        self.metadata = root / METADATA_NAME
 
     def load_or_create(
         self,
@@ -53,7 +97,7 @@ class SigningIdentityStore:
         keystore, metadata = self._paths_for_dname(dname)
         if keystore.is_file() and metadata.is_file():
             return self._load(keystore, metadata)
-        if not dname and self.root.exists() and any(self.root.iterdir()):
+        if not dname and signing_identity_is_incomplete(self.root):
             raise SigningIdentityError(
                 "The signing identity is incomplete. Restore its key files or review the "
                 "legacy-key migration error in the activity log before building."

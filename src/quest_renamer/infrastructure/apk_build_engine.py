@@ -37,7 +37,12 @@ from quest_renamer.infrastructure.older_firmware_patch import (
     apply_older_firmware_patch,
 )
 from quest_renamer.infrastructure.package_rewriter import replace_package_references
-from quest_renamer.infrastructure.process_runner import CommandFailed, ProcessRunner
+from quest_renamer.infrastructure.process_runner import (
+    CommandFailed,
+    CommandTimedOut,
+    ProcessRunner,
+)
+from quest_renamer.infrastructure.signer_inspection import parse_signature_details
 from quest_renamer.infrastructure.signing_identity import (
     SigningIdentityError,
     SigningIdentityStore,
@@ -56,6 +61,12 @@ def _format_bytes(value: int) -> str:
             return f"{amount:.0f} {unit}" if unit == "B" else f"{amount:.1f} {unit}"
         amount /= 1024
     return f"{amount:.1f} TB"
+
+
+def _current_umask() -> int:
+    value = os.umask(0)
+    os.umask(value)
+    return value
 
 
 def _unique_recovery_path(source: Path, label: str = "Original Backup") -> Path:
@@ -161,6 +172,10 @@ class StagedApkBuildEngine:
         assert self.toolchain.apktool is not None
         assert self.toolchain.signer is not None
         token.raise_if_cancelled()
+        if not request.source.package_name:
+            raise BuildError(
+                "The source package ID is unknown; analyze the APK before building."
+            )
 
         output = request.output_root.resolve(strict=False)
         source_root = request.source.root.resolve(strict=False)
@@ -181,20 +196,25 @@ class StagedApkBuildEngine:
             )
         except ValueError as exc:
             raise BuildError(str(exc)) from exc
-        output.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_root.mkdir(parents=True, exist_ok=True)
-        framework = self.cache_root / "apktool-framework"
-        framework.mkdir(parents=True, exist_ok=True)
-        staging = Path(
-            tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent)
-        ).resolve()
-        if self.recovery_record is not None:
-            write_build_recovery(
-                self.recovery_record,
-                staging=staging,
-                source=source_root,
-                output=output,
-            )
+        try:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_root.mkdir(parents=True, exist_ok=True)
+            framework = self.cache_root / "apktool-framework"
+            framework.mkdir(parents=True, exist_ok=True)
+            staging = Path(
+                tempfile.mkdtemp(prefix=f".{output.name}.staging-", dir=output.parent)
+            ).resolve()
+            # mkdtemp creates 0700; the published folder should be a normal directory.
+            os.chmod(staging, 0o777 & ~_current_umask())
+            if self.recovery_record is not None:
+                write_build_recovery(
+                    self.recovery_record,
+                    staging=staging,
+                    source=source_root,
+                    output=output,
+                )
+        except OSError as exc:
+            raise BuildError(f"The output location could not be prepared: {exc}") from exc
         published = False
         app_label = ""
         app_icon: Path | None = None
@@ -325,7 +345,7 @@ class StagedApkBuildEngine:
                     signing_identity = identity
                     signed.mkdir()
                     progress(0.67, "Signing and aligning APK")
-                    self.runner.run(
+                    sign_result = self.runner.run(
                         (
                             self.toolchain.java,
                             "-jar",
@@ -343,6 +363,7 @@ class StagedApkBuildEngine:
                             "--ksKeyPass",
                             identity.password,
                             "--allowResign",
+                            "--verbose",
                         ),
                         token=token,
                         log=log,
@@ -355,18 +376,27 @@ class StagedApkBuildEngine:
                         raise BuildError("The signer completed but did not produce an APK.")
                     built_apk = candidates[0]
                     progress(0.78, "Verifying APK signature")
-                    self.runner.run(
-                        (
-                            self.toolchain.java,
-                            "-jar",
-                            self.toolchain.signer,
-                            "--apks",
-                            built_apk,
-                            "--onlyVerify",
-                        ),
-                        token=token,
-                        log=log,
-                    )
+                    # uber-apk-signer verifies as part of signing and prints the result;
+                    # trust that report and only start a second JVM when it is absent.
+                    sign_report = parse_signature_details("\n".join(sign_result.output), ())
+                    if sign_report.verified:
+                        log(
+                            "Signature verified by the signer run: "
+                            + ", ".join(sign_report.schemes).upper()
+                        )
+                    else:
+                        self.runner.run(
+                            (
+                                self.toolchain.java,
+                                "-jar",
+                                self.toolchain.signer,
+                                "--apks",
+                                built_apk,
+                                "--onlyVerify",
+                            ),
+                            token=token,
+                            log=log,
+                        )
 
                 progress(0.83, "Saving APK")
                 apk_output = staging / f"{request.package_name}.apk"
@@ -418,7 +448,11 @@ class StagedApkBuildEngine:
 
                 progress(0.96, "Writing bundle metadata")
                 manifest = write_release_manifest(
-                    request, staging, apk_output, tuple(obb_outputs)
+                    request,
+                    staging,
+                    apk_output,
+                    tuple(obb_outputs),
+                    release_name=output.name,
                 )
                 report = write_build_report(
                     request,
@@ -489,8 +523,10 @@ class StagedApkBuildEngine:
             raise BuildError(str(exc), partial_output=exc.partial_output or partial) from exc
         except (
             CommandFailed,
+            CommandTimedOut,
             OlderFirmwarePatchError,
             SigningIdentityError,
+            ValueError,
             OSError,
         ) as exc:
             partial = staging if staging.exists() and any(staging.iterdir()) else None

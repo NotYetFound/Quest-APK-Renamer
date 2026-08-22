@@ -10,6 +10,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,8 +22,15 @@ from quest_renamer.domain.inspection import (
     SignatureDetail,
 )
 from quest_renamer.domain.operations import CancellationToken
+from quest_renamer.infrastructure.apk_analyzer import parse_apktool_metadata
 from quest_renamer.infrastructure.process_runner import ProcessRunner
-from quest_renamer.infrastructure.reference_scanner import count_file_patterns
+from quest_renamer.infrastructure.reference_scanner import (
+    MAX_SCAN_SIZE,
+    PackagePatterns,
+    count_file_patterns,
+    is_technical_file,
+    iter_decoded_files,
+)
 from quest_renamer.infrastructure.signer_inspection import (
     inspect_signature_details,
     load_signer_registry,
@@ -158,24 +166,6 @@ def parse_detailed_manifest(path: Path, strings: dict[str, str]) -> _ManifestDet
     )
 
 
-def parse_apktool_metadata(path: Path) -> dict[str, str]:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError:
-        return {}
-
-    def grab(pattern: str) -> str:
-        match = re.search(pattern, text, re.MULTILINE)
-        return match.group(1).strip() if match else ""
-
-    return {
-        "min_sdk": grab(r"^\s*minSdkVersion:\s*['\"]?([^'\"\n]+)"),
-        "target_sdk": grab(r"^\s*targetSdkVersion:\s*['\"]?([^'\"\n]+)"),
-        "version_code": grab(r"^\s*versionCode:\s*['\"]?([^'\"\n]+)"),
-        "version_name": grab(r"^\s*versionName:\s*['\"]?([^'\"\n]+)"),
-    }
-
-
 def inspect_archive(apk: Path) -> _ArchiveDetails:
     abis: set[str] = set()
     locales: set[str] = set()
@@ -210,32 +200,31 @@ def inspect_archive(apk: Path) -> _ArchiveDetails:
 
 
 def compute_hashes(apk: Path, token: CancellationToken) -> tuple[tuple[str, str], ...]:
-    digests = {
-        "md5": hashlib.md5(usedforsecurity=False),
-        "sha1": hashlib.sha1(usedforsecurity=False),
-        "sha256": hashlib.sha256(),
-    }
-    try:
+    """MD5, SHA-1, and SHA-256 of the APK, computed in parallel.
+
+    hashlib releases the GIL, so three worker threads roughly halve the wall time
+    on multi-gigabyte APKs compared with feeding every digest from one loop.
+    """
+    names = ("md5", "sha1", "sha256")
+
+    def digest(name: str) -> str:
+        algorithm = hashlib.new(name, usedforsecurity=False)
         with apk.open("rb") as handle:
-            while chunk := handle.read(1024 * 1024):
+            while chunk := handle.read(4 * 1024 * 1024):
                 token.raise_if_cancelled()
-                for digest in digests.values():
-                    digest.update(chunk)
+                algorithm.update(chunk)
+        return algorithm.hexdigest()
+
+    try:
+        with ThreadPoolExecutor(max_workers=len(names)) as pool:
+            values = list(pool.map(digest, names))
     except OSError as exc:
         raise DetailedInspectionError(f"The APK could not be hashed: {exc}") from exc
-    return tuple((name, digest.hexdigest()) for name, digest in digests.items())
+    return tuple(zip(names, values, strict=True))
 
 
 def _technical_file(relative: Path) -> bool:
-    return (
-        relative.as_posix() in {"AndroidManifest.xml", "apktool.yml"}
-        or relative.suffix.lower() == ".smali"
-        or (
-            len(relative.parts) > 1
-            and relative.parts[0] in TECHNICAL_XML_ROOTS
-            and relative.suffix.lower() == ".xml"
-        )
-    )
+    return is_technical_file(relative.as_posix())
 
 
 def scan_package_references(
@@ -243,25 +232,15 @@ def scan_package_references(
     old_package: str,
     token: CancellationToken,
 ) -> ReferencePreview:
-    exact = old_package.encode("utf-8")
-    slashed_value = old_package.replace(".", "/")
-    slashed = slashed_value.encode("utf-8")
+    """Preview exactly what the rewriter would change, using the same token rules."""
+    patterns = PackagePatterns.for_package(old_package)
     technical: list[ReferenceHit] = []
     preserved: list[ReferenceHit] = []
     native: list[ReferenceHit] = []
     total = 0
-    for path in decoded.rglob("*"):
+    for path, relative, size in iter_decoded_files(decoded):
         token.raise_if_cancelled()
-        if not path.is_file() or path.is_symlink():
-            continue
-        relative = path.relative_to(decoded)
-        patterns = (exact, slashed) if slashed != exact else (exact,)
-        counts = count_file_patterns(
-            path,
-            patterns,
-            token,
-            max_size=64 * 1024 * 1024,
-        )
+        counts = count_file_patterns(path, patterns, token, max_size=MAX_SCAN_SIZE, size=size)
         if counts is None:
             continue
         dotted_count = counts[0]
@@ -269,13 +248,13 @@ def scan_package_references(
         occurrences = dotted_count + slashed_count
         if not occurrences:
             continue
-        hit = ReferenceHit(relative.as_posix(), occurrences, dotted_count, slashed_count)
-        if _technical_file(relative):
+        hit = ReferenceHit(relative, occurrences, dotted_count, slashed_count)
+        if is_technical_file(relative):
             technical.append(hit)
             total += occurrences
         else:
             preserved.append(hit)
-            if relative.suffix.lower() in {".so", ".dex"}:
+            if relative.lower().endswith((".so", ".dex")):
                 native.append(hit)
     return ReferencePreview(
         old_package,
@@ -305,11 +284,15 @@ class FullDecodeApkInspector:
         signer_registry: Path,
         runner: ProcessRunner | None = None,
         temporary_root: Path | None = None,
+        framework_root: Path | None = None,
     ) -> None:
         self.toolchain = toolchain
         self.signer_registry = signer_registry
         self.runner = runner or ProcessRunner()
         self.temporary_root = temporary_root
+        # Share the build engine's framework cache so the inspector does not
+        # re-extract framework-res into a second location on every run.
+        self.framework_root = framework_root
 
     def inspect(
         self,
@@ -356,6 +339,10 @@ class FullDecodeApkInspector:
             ) as temporary:
                 decoded = Path(temporary) / "decoded"
                 progress(0.25, "Decoding APK for inspection")
+                framework_args: tuple[str | Path, ...] = ()
+                if self.framework_root is not None:
+                    self.framework_root.mkdir(parents=True, exist_ok=True)
+                    framework_args = ("-p", self.framework_root)
                 self.runner.run(
                     (
                         self.toolchain.java,
@@ -363,6 +350,7 @@ class FullDecodeApkInspector:
                         self.toolchain.apktool,
                         "d",
                         "-f",
+                        *framework_args,
                         apk,
                         "-o",
                         decoded,

@@ -77,7 +77,8 @@ Popup {
                 color: "#aaaaaa"
                 font.pixelSize: 12
                 lineHeight: 1.25
-                wrapMode: Text.WordWrap
+                // Long filesystem paths rarely contain spaces; allow breaking anywhere.
+                wrapMode: Text.Wrap
             }
         }
 

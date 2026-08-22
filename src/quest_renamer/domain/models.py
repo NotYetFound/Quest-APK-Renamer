@@ -65,6 +65,9 @@ class DeviceSnapshot:
     model: str = ""
     free_bytes: int | None = None
     detail: str = ""
+    # (serial, label) pairs when several authorized devices are attached and the
+    # user has to pick one.
+    candidates: tuple[tuple[str, str], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

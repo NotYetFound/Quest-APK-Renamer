@@ -4,6 +4,83 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.4.6] - 2026-08-22
+
+### Added
+
+- Wireless ADB: connect to a headset by address (or a pasted `adb connect` line), switch a USB-attached
+  Quest to wireless ADB with one click, and a saved-Quests list (name, address, last connection) with
+  Connect, Disconnect, Copy command, Rename, Forget, Disconnect all, and Forget all actions.
+- A connection panel on the header chip showing the current headset, attached devices to choose
+  from when several are plugged in, saved wireless Quests with one-click connect, and the wireless
+  actions; the refresh control is a small icon beside it.
+- A configurable default app ID tag (`.mr`, `.dev`, `.test`, `.qa`, or custom) used for every new
+  suggestion.
+- Uninstall-and-reinstall recovery when the Quest rejects an APK because of a signing or version
+  conflict, with readable explanations of `INSTALL_FAILED_*` codes.
+
+### Fixed
+
+- An APK-only install (for example a finished folder without OBBs, or a patch sideload) no
+  longer deletes the OBB files that already exist on the Quest for that package.
+- Retrying a failed OBB transfer no longer removes the other OBBs of the same game, and a
+  transfer that failed before the APK was installed now reruns the complete install instead of
+  pushing OBBs for an app that is not there yet.
+- Stale `.qar-new-*` staging files left by an interrupted transfer are now found and removed
+  (`ls` hides dotfiles on the headset without `-a`).
+- Renaming `com.example.game` no longer corrupts neighbouring identifiers such as
+  `com.example.gamepad` or `Lcom/example/gamepad/…;`; references are matched as whole tokens,
+  and the Inspector preview uses exactly the same rule as the rewrite.
+- Version code, version name, and SDK levels are read from `apktool.yml` when recent Apktool
+  releases strip them from the decoded manifest, so the Dashboard, Library version comparison,
+  and `release.manifest` no longer report an empty or default version.
+- Folders the app creates next to the signing identity (`app-icons`, `imported-identities`)
+  no longer make the app believe the signing identity is incomplete before the first key exists.
+- The automatic device poll no longer overwrites the build or install result shown on the
+  Dashboard, and a symlinked APK no longer leaves the Dashboard stuck in "analyzing".
+- Choosing another source while a build or install is running is refused instead of mixing the
+  finished result into the new selection; the "Install built game" action always installs the
+  package ID that was actually built.
+- Unexpected exceptions in the device poll, update check, tool repair, Library archive, and bulk
+  build/install workers no longer leave the app permanently busy; bulk install stops cleanly
+  when the headset disconnects mid-queue.
+- Direct Quest updates no longer show a misleading "local folder was kept" warning.
+- `release.manifest` records the final output folder name instead of the hidden staging name,
+  finished output folders are created with normal permissions, and tool errors show the real
+  Java diagnostic instead of the last stack-trace line.
+- Upper-case `.APK`/`.OBB` extensions are recognised, and a phone connected next to the headset
+  no longer blocks the Quest from being selected.
+- Sidebar icons sit on the text baseline, and the hover highlight no longer flickers between rows.
+- Dashboard, Settings, and Inspector pages scroll a fixed distance per wheel notch with no kinetic
+  overshoot; touchpads scroll by their pixel delta.
+
+### Changed
+
+- Dashboard: Clear, Open, and Copy actions for the source, save location, package ID, and error
+  message; an elapsed-time counter during operations; debounced package-ID validation; tag
+  buttons disabled during direct Quest updates; and the drop zone disabled while busy.
+- Library: selecting an app no longer rebuilds the list (and no longer scrolls to the top),
+  Up/Down keys move the selection, and the live-view choice survives routine device polls.
+- Bulk queue: per-entry Open and Copy-error actions, a "Remove finished" action, a clear note
+  when unbuilt entries would install under their original package ID, and queue-level
+  refreshes only on status changes instead of every progress tick.
+- Logs window follows new lines unless scrolled away, remembers its size, closes with `Esc`, and
+  UI refreshes for log bursts are coalesced (1–3 ms per line saved during builds).
+- Install progress shows transfer speed and time remaining for large OBB pushes and a heartbeat
+  during the APK install; remote OBB listing, hashing, and cleanup use far fewer ADB round trips.
+- Startup hashes each bundled tool once instead of two or three times and defers the network
+  stack until an update check or tool repair actually runs; the log tail is read from the end of
+  the file.
+- Package-reference scanning walks the decoded tree with one `stat` per file and larger chunks,
+  the Inspector hashes MD5/SHA-1/SHA-256 in parallel and shares the Apktool framework cache, and
+  the signer's own verification report is trusted instead of starting a second JVM.
+- Preflight checks free space on the app cache drive as well as the output drive, and reports a
+  read-only save location before the build starts.
+- Shared UI components (panels, captions, switches, scroll bars, progress bars) replace ad-hoc
+  copies, pages use one margin, panels size to their content, and tooltips explain ambiguous
+  buttons; `Enter` activates dialog buttons.
+- Linux packages omit Qt PDF, the virtual keyboard, and unused image-format plugins.
+
 ## [1.4.5] - 2026-08-21
 
 ### Added

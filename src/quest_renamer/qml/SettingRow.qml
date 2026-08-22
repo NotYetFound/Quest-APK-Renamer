@@ -10,6 +10,9 @@ Item {
     property bool compact: false
     signal changed(bool value)
     implicitHeight: compact ? 42 : 64
+    Accessible.role: Accessible.CheckBox
+    Accessible.name: title
+    Accessible.description: detail
 
     RowLayout {
         anchors.fill: parent
@@ -18,10 +21,12 @@ Item {
             Layout.fillWidth: true
             spacing: root.compact ? 1 : 3
             Text {
+                Layout.fillWidth: true
                 text: root.title
-                color: "#e2e2e2"
+                color: root.enabled ? "#e2e2e2" : "#8f8f8f"
                 font.pixelSize: root.compact ? 11 : 13
                 font.weight: Font.Medium
+                elide: Text.ElideRight
             }
             Text {
                 text: root.detail
@@ -29,33 +34,34 @@ Item {
                 font.pixelSize: root.compact ? 9 : 11
                 Layout.fillWidth: true
                 elide: Text.ElideRight
-            }
-        }
-        Switch {
-            id: toggle
-            Layout.preferredWidth: root.compact ? 36 : 42
-            Layout.preferredHeight: root.compact ? 20 : 24
-            indicator: Rectangle {
-                implicitWidth: root.compact ? 32 : 38
-                implicitHeight: root.compact ? 18 : 22
-                x: toggle.leftPadding
-                y: parent.height / 2 - height / 2
-                radius: 11
-                color: toggle.checked ? "#3478b1" : "#383838"
-                border.width: 1
-                border.color: toggle.checked ? "#4a8bc0" : "#505050"
-                Behavior on color { ColorAnimation { duration: 120 } }
-                Rectangle {
-                    x: toggle.checked ? parent.width - width - 3 : 3
-                    y: 3
-                    width: root.compact ? 12 : 16
-                    height: root.compact ? 12 : 16
-                    radius: 8
-                    color: "#f0f3f6"
-                    Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
+                ToolTip.visible: detailMouse.containsMouse && truncated
+                ToolTip.text: root.detail
+                ToolTip.delay: 400
+                MouseArea {
+                    id: detailMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
                 }
             }
+        }
+        AppSwitch {
+            id: toggle
+            compact: root.compact
+            Accessible.name: root.title
             onToggled: root.changed(checked)
+        }
+    }
+
+    MouseArea {
+        // Clicking the label toggles the switch, like a native form row.
+        anchors.fill: parent
+        anchors.rightMargin: toggle.width + 12
+        enabled: root.enabled
+        cursorShape: Qt.PointingHandCursor
+        onClicked: {
+            toggle.toggle()
+            root.changed(toggle.checked)
         }
     }
 

@@ -196,6 +196,59 @@ def find_adb(
 RunCommand = Callable[..., subprocess.CompletedProcess[str]]
 
 
+_QUEST_PRODUCTS = frozenset(
+    {
+        # Meta/Oculus product code names reported by ``adb devices -l``.
+        "monterey",  # Quest 1
+        "hollywood",  # Quest 2
+        "seacliff",  # Quest Pro
+        "eureka",  # Quest 3
+        "panther",  # Quest 3S
+        "vr_monterey",
+        "vr_hollywood",
+    }
+)
+
+
+def _device_label(record: AdbRecord) -> str:
+    model = record.attributes.get("model") or record.attributes.get("product") or ""
+    return f"{model} ({record.serial})" if model else record.serial
+
+
+def normalize_wireless_address(address: str) -> str:
+    """Accept ``host``, ``host:port``, or ``adb connect host:port`` paste-ins."""
+    value = address.strip()
+    if value.lower().startswith("adb connect "):
+        value = value[len("adb connect ") :].strip()
+    if not value:
+        raise OSError("Enter the headset's Wi-Fi address, for example 192.168.1.20:5555.")
+    if ":" not in value:
+        value = f"{value}:5555"
+    host, _, port = value.rpartition(":")
+    if not host or not port.isdigit():
+        raise OSError("Use the form host:port, for example 192.168.1.20:5555.")
+    return f"{host}:{port}"
+
+
+def parse_wlan_address(output: str) -> str:
+    match = re.search(r"inet\s+(\d{1,3}(?:\.\d{1,3}){3})/", output)
+    return match.group(1) if match else ""
+
+
+def parse_route_source(output: str) -> str:
+    match = re.search(r"\bsrc\s+(\d{1,3}(?:\.\d{1,3}){3})", output)
+    return match.group(1) if match else ""
+
+
+def _looks_like_quest(record: AdbRecord) -> bool:
+    values = " ".join(record.attributes.values()).casefold()
+    return (
+        "quest" in values
+        or "oculus" in values
+        or record.attributes.get("product", "").casefold() in _QUEST_PRODUCTS
+    )
+
+
 class AdbDeviceService:
     def __init__(
         self,
@@ -211,6 +264,10 @@ class AdbDeviceService:
         self._executable = executable
         self._run = run
         self._models: dict[str, str] = {}
+        self.preferred_serial = ""
+
+    def set_preferred_serial(self, serial: str) -> None:
+        self.preferred_serial = serial.strip()
 
     def _adb(self) -> Path | None:
         if self._configured_adb is not None:
@@ -260,11 +317,24 @@ class AdbDeviceService:
         records = parse_adb_devices(result.stdout)
         ready = [record for record in records if record.state == "device"]
         if len(ready) > 1:
-            return DeviceSnapshot(
-                False,
-                status="multiple",
-                detail="Disconnect other Android devices and leave one Quest connected.",
-            )
+            # A phone or emulator next to the headset is common; prefer the one
+            # device that identifies itself as a Quest, or the serial the user picked,
+            # instead of refusing outright.
+            preferred = [record for record in ready if record.serial == self.preferred_serial]
+            quests = [record for record in ready if _looks_like_quest(record)]
+            if preferred:
+                ready = preferred
+            elif len(quests) == 1:
+                ready = quests
+            else:
+                return DeviceSnapshot(
+                    False,
+                    status="multiple",
+                    detail="Several devices are attached. Choose the Quest to use.",
+                    candidates=tuple(
+                        (record.serial, _device_label(record)) for record in ready
+                    ),
+                )
         if not ready:
             if any(record.state == "unauthorized" for record in records):
                 return DeviceSnapshot(
@@ -303,6 +373,8 @@ class AdbDeviceService:
                     model = model_result.stdout.strip()
             except (OSError, subprocess.TimeoutExpired):
                 pass
+            if len(self._models) > 16:
+                self._models.clear()
             self._models[record.serial] = model
 
         free_bytes = None
@@ -320,6 +392,88 @@ class AdbDeviceService:
             free_bytes=free_bytes,
             detail=f"Connected through {adb}",
         )
+
+    # ------------------------------------------------------------ wireless ADB
+
+    def connect_wireless(self, address: str) -> str:
+        """``adb connect host[:port]``; returns the confirmation text or raises OSError."""
+        address = normalize_wireless_address(address)
+        adb = self._adb()
+        if adb is None:
+            raise OSError("Android Platform Tools are not available.")
+        try:
+            result = self._command((str(adb), "connect", address), timeout=20)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OSError(f"Could not reach {address}: {exc}") from exc
+        message = (result.stdout + result.stderr).strip().splitlines()
+        text = message[-1] if message else ""
+        lowered = text.lower()
+        if result.returncode == 0 and (
+            lowered.startswith("connected to") or lowered.startswith("already connected")
+        ):
+            return text
+        raise OSError(text or f"ADB could not connect to {address}.")
+
+    def disconnect_wireless(self, address: str) -> str:
+        """``adb disconnect host:port``; an empty address disconnects every TCP device."""
+        address = normalize_wireless_address(address) if address.strip() else ""
+        adb = self._adb()
+        if adb is None:
+            raise OSError("Android Platform Tools are not available.")
+        try:
+            arguments = (str(adb), "disconnect") + ((address,) if address else ())
+            result = self._command(arguments, timeout=15)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OSError(f"Could not disconnect {address}: {exc}") from exc
+        text = (result.stdout + result.stderr).strip()
+        if result.returncode != 0 and "no such device" not in text.lower():
+            raise OSError(text or f"ADB could not disconnect {address or 'wireless devices'}.")
+        return text or f"Disconnected {address or 'all wireless devices'}."
+
+    def enable_wireless(self, serial: str, *, port: int = 5555) -> str:
+        """Switch a USB-attached headset to TCP/IP ADB and connect to it.
+
+        Returns the ``host:port`` address that is now connected. The USB cable can be
+        unplugged afterwards; the headset keeps listening until it reboots.
+        """
+        adb = self._adb()
+        if adb is None:
+            raise OSError("Android Platform Tools are not available.")
+        if not serial:
+            raise OSError("Connect the headset by USB first.")
+        target = (str(adb), "-s", serial)
+        try:
+            ip_result = self._command(
+                (*target, "shell", "ip", "-f", "inet", "addr", "show", "wlan0"), timeout=15
+            )
+            address = parse_wlan_address(ip_result.stdout)
+            if not address:
+                route = self._command((*target, "shell", "ip", "route"), timeout=15)
+                address = parse_route_source(route.stdout)
+            if not address:
+                raise OSError(
+                    "The headset's Wi-Fi address could not be read. Make sure it is "
+                    "connected to the same Wi-Fi network."
+                )
+            tcpip = self._command((*target, "tcpip", str(port)), timeout=20)
+            if tcpip.returncode != 0:
+                detail = (tcpip.stderr or tcpip.stdout).strip()
+                raise OSError(detail or "ADB could not switch the headset to TCP/IP mode.")
+        except subprocess.TimeoutExpired as exc:
+            raise OSError(f"The headset did not answer in time: {exc}") from exc
+        wireless = f"{address}:{port}"
+        # The daemon restarts in TCP mode; give it a moment before connecting.
+        import time
+
+        last_error = ""
+        for attempt in range(6):
+            time.sleep(0.8 if attempt else 1.5)
+            try:
+                self.connect_wireless(wireless)
+                return wireless
+            except OSError as exc:
+                last_error = str(exc)
+        raise OSError(last_error or f"ADB could not connect to {wireless}.")
 
     def installed_apps(self, serial: str) -> tuple[InstalledQuestApp, ...]:
         """List third-party packages, using two bounded ADB calls for any library size."""

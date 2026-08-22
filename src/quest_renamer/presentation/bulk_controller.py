@@ -24,12 +24,13 @@ from PySide6.QtCore import (
 from quest_renamer.domain.analysis import ApkAnalysis
 from quest_renamer.domain.build import BuildError, BuildResult
 from quest_renamer.domain.bulk import package_with_suffix
-from quest_renamer.domain.installation import BundleInstallError
 from quest_renamer.domain.models import BuildRequest, BundleDraft, DeviceSnapshot
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
+from quest_renamer.infrastructure.desktop_open import open_local_path
 from quest_renamer.infrastructure.local_bundles import BundleSelectionError
 from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
+from quest_renamer.presentation.shared import write_system_clipboard
 from quest_renamer.services.contracts import (
     ApkAnalyzer,
     BuildEngine,
@@ -195,10 +196,14 @@ class BulkController(QObject):
         device_snapshot: Callable[[], DeviceSnapshot],
         external_busy: Callable[[], bool] | None = None,
         move_to_trash: Callable[[Path], None] | None = None,
+        path_opener: Callable[[Path], bool] | None = None,
+        clipboard_writer: Callable[[str], bool] | None = None,
         parent: QObject | None = None,
     ) -> None:
         super().__init__(parent)
         self._model = BulkQueueModel(self)
+        self._path_opener = path_opener or open_local_path
+        self._clipboard_writer = clipboard_writer or write_system_clipboard
         self._inspector = inspector
         self._analyzer = analyzer
         self._preflight_service = preflight_service
@@ -262,6 +267,10 @@ class BulkController(QObject):
             and not self.has_active_work()
             and any(not item.installed for item in entries)
         )
+
+    @Property(bool, notify=queueChanged)
+    def hasInstalled(self) -> bool:
+        return any(item.installed for item in self._model.entries())
 
     @Property(bool, notify=queueChanged)
     def canEditSuffix(self) -> bool:
@@ -379,6 +388,44 @@ class BulkController(QObject):
         if not self.has_active_work() and self._model.remove(row):
             self._queue_updated()
 
+    @Slot(int)
+    def openOutput(self, row: int) -> None:
+        entries = self._model.entries()
+        if not 0 <= row < len(entries):
+            return
+        entry = entries[row]
+        folder = entry.bundle.root if entry.built else entry.source.root
+        if not folder.is_dir():
+            self._set_status(f"{folder.name} is no longer available.")
+            return
+        if not self._path_opener(folder):
+            self._set_status(f"Could not open {folder}.")
+
+    @Slot(int)
+    def copyDetail(self, row: int) -> None:
+        entries = self._model.entries()
+        if not 0 <= row < len(entries):
+            return
+        entry = entries[row]
+        text = f"{entry.source.root.name}: {entry.status} — {entry.detail}"
+        if self._clipboard_writer(text):
+            self._set_status("Entry details copied to the clipboard.")
+        else:
+            self._set_status("The clipboard is unavailable in this session.")
+
+    @Slot()
+    def removeFinished(self) -> None:
+        """Drop installed entries so the queue only shows remaining work."""
+        if self.has_active_work():
+            return
+        removed = False
+        for row in range(self._model.rowCount() - 1, -1, -1):
+            entry = self._model.entries()[row]
+            if entry.installed and self._model.remove(row):
+                removed = True
+        if removed:
+            self._queue_updated()
+
     @Slot()
     def clear(self) -> None:
         if self.has_active_work():
@@ -432,6 +479,13 @@ class BulkController(QObject):
         space_note = ""
         if device.free_bytes is not None and required > device.free_bytes:
             space_note = " The full queue may not fit in the available Quest storage."
+        unbuilt = [item for item in entries if not item.built]
+        if unbuilt:
+            space_note += (
+                f" {len(unbuilt)} game{'s' if len(unbuilt) != 1 else ''} "
+                f"{'have' if len(unbuilt) != 1 else 'has'} not been built yet and will be "
+                "installed unchanged under the original package ID."
+            )
         cleanup_note = (
             " Verified local output folders will then move to Trash."
             if self._cleanup_after_install
@@ -675,8 +729,8 @@ class BulkController(QObject):
                 self.itemReady.emit(row, completed)
                 successes += 1
                 self.activityMessage.emit(f"Bulk build complete: {result.output_root}")
-            except (BuildError, OSError, ValueError) as exc:
-                if token.is_cancelled():
+            except Exception as exc:  # one failed game must never stop the queue
+                if token.is_cancelled() or isinstance(exc, OperationCancelled):
                     cancelled = True
                     self.itemReady.emit(
                         row,
@@ -689,7 +743,7 @@ class BulkController(QObject):
                     )
                     break
                 failures += 1
-                detail = str(exc)
+                detail = str(exc) or exc.__class__.__name__
                 details.append(f"{entry.source.root.name}: {detail}")
                 self.itemReady.emit(
                     row,
@@ -704,7 +758,6 @@ class BulkController(QObject):
         entries: tuple[BulkEntry, ...],
         token: CancellationToken,
     ) -> None:
-        device = self._device_snapshot()
         rows = [(row, item) for row, item in enumerate(entries) if not item.installed]
         successes = 0
         failures = 0
@@ -713,6 +766,23 @@ class BulkController(QObject):
         for position, (row, entry) in enumerate(rows):
             if token.is_cancelled():
                 cancelled = True
+                break
+            # Re-read the headset state for every game; a disconnect mid-queue must
+            # stop cleanly instead of failing each remaining entry in turn.
+            device = self._device_snapshot()
+            if not device.connected or not device.serial:
+                failures += len(rows) - position
+                details.append("Quest disconnected; remaining games were skipped.")
+                for skipped_row, skipped in rows[position:]:
+                    self.itemReady.emit(
+                        skipped_row,
+                        replace(
+                            skipped,
+                            status="Skipped",
+                            detail="Quest disconnected before this game was installed",
+                            tone="warning",
+                        ),
+                    )
                 break
             self.itemReady.emit(
                 row,
@@ -774,7 +844,7 @@ class BulkController(QObject):
                 )
                 successes += 1
                 self.activityMessage.emit(f"Bulk install verified: {entry.bundle.root}")
-            except (BundleInstallError, OperationCancelled, OSError) as exc:
+            except Exception as exc:  # one failed game must never stop the queue
                 if token.is_cancelled() or isinstance(exc, OperationCancelled):
                     cancelled = True
                     self.itemReady.emit(
@@ -788,7 +858,7 @@ class BulkController(QObject):
                     )
                     break
                 failures += 1
-                detail = str(exc)
+                detail = str(exc) or exc.__class__.__name__
                 details.append(f"{entry.bundle.root.name}: {detail}")
                 self.itemReady.emit(
                     row,
@@ -800,8 +870,17 @@ class BulkController(QObject):
 
     @Slot(int, object)
     def _apply_item(self, row: int, raw_entry: object) -> None:
-        if isinstance(raw_entry, BulkEntry):
-            self._model.replace_entry(row, raw_entry)
+        if not isinstance(raw_entry, BulkEntry):
+            return
+        entries = self._model.entries()
+        previous = entries[row] if 0 <= row < len(entries) else None
+        self._model.replace_entry(row, raw_entry)
+        # Progress ticks only touch the row; queue-wide flags change on status edges.
+        if previous is None or (
+            previous.status,
+            previous.built,
+            previous.installed,
+        ) != (raw_entry.status, raw_entry.built, raw_entry.installed):
             self.queueChanged.emit()
 
     @Slot(float, str)

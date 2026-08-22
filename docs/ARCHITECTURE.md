@@ -89,5 +89,11 @@ Domain models          Infrastructure adapters
   resolved path, byte size, and nanosecond modification time still match.
 - Nontechnical decoded APK files are scanned in bounded chunks. Technical files are loaded only
   when they may actually be rewritten.
+- A package reference is matched as a whole token (`infrastructure/reference_scanner.py`):
+  `com.example.game` and its sub-packages match, `com.example.gamepad` and
+  `org.foo.com.example.game` do not. The Inspector preview and the rewrite share this rule.
+- The installer prunes obsolete OBBs only when the bundle supplied the complete OBB set (or a
+  retry was given the full set of names); APK-only installs never touch existing OBBs. Remote
+  listings use one `stat` call per phase and remote digests are cached per transfer.
 - Frozen-package trimming is accepted only after the portable executable and AppImage both pass
   the same offscreen QML launch test; native dialog, display, rendering, and image plugins remain.

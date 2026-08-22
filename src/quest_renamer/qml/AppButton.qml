@@ -6,6 +6,8 @@ Button {
     property bool primary: false
     property bool quiet: false
     property bool danger: false
+    // Optional hover tooltip explaining what the action does.
+    property string tip: ""
 
     implicitHeight: 38
     leftPadding: 14
@@ -14,6 +16,15 @@ Button {
     font.weight: Font.DemiBold
     focusPolicy: Qt.StrongFocus
     Accessible.name: text
+    Accessible.description: tip
+
+    ToolTip.visible: tip.length > 0 && hovered
+    ToolTip.text: tip
+    ToolTip.delay: 500
+
+    // The Basic style only activates buttons on Space; users expect Return as well.
+    Keys.onReturnPressed: if (enabled) clicked()
+    Keys.onEnterPressed: if (enabled) clicked()
 
     contentItem: Text {
         text: control.text
@@ -23,6 +34,7 @@ Button {
               : "#e3e3e3"
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
+        elide: Text.ElideRight
     }
 
     background: Rectangle {

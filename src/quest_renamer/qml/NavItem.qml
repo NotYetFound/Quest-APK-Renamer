@@ -13,27 +13,32 @@ Button {
     implicitHeight: visualHeight + gapHitHeight
     leftPadding: 12
     rightPadding: 10
-    bottomPadding: topPadding + gapHitHeight
-    focusPolicy: Qt.StrongFocus
+    topPadding: 0
+    bottomPadding: gapHitHeight
+    focusPolicy: Qt.TabFocus
     Accessible.name: label
     Accessible.description: selected ? "Current page" : "Open page"
 
-    contentItem: Row {
-        spacing: 9
-        Item {
-            width: 20
-            height: 18
-            IconImage {
-                width: 16
-                height: 16
-                anchors.centerIn: parent
-                source: control.iconSource
-                color: control.selected ? "#d7d7d7" : "#858585"
-                sourceSize.width: 16
-                sourceSize.height: 16
-            }
+    // Icon and label share one vertical centre inside the visible 40 px row; the
+    // glyph is nudged 1 px down so it lines up with the optical centre of the text.
+    contentItem: Item {
+        implicitHeight: control.visualHeight
+        implicitWidth: 20 + 9 + navLabel.implicitWidth
+        IconImage {
+            id: navIcon
+            width: 16
+            height: 16
+            x: 2
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.verticalCenterOffset: 1
+            source: control.iconSource
+            color: control.selected ? "#d7d7d7" : "#858585"
+            sourceSize.width: 16
+            sourceSize.height: 16
         }
         Text {
+            id: navLabel
+            x: 29
             anchors.verticalCenter: parent.verticalCenter
             text: control.label
             color: control.selected ? "#f0f0f0" : "#a9a9a9"
@@ -48,9 +53,11 @@ Button {
         radius: 2
         color: control.selected ? "#272727"
               : control.activeFocus ? "#252525"
-              : control.hovered ? "#222222"
+              : rowHover.hovered ? "#222222"
               : "transparent"
-        Behavior on color { ColorAnimation { duration: 110 } }
+        // Only the visible row reacts to the pointer; the 3 px hit gap below each
+        // row belongs to the button for clicks but must not light it up.
+        HoverHandler { id: rowHover }
 
         Rectangle {
             visible: control.selected || control.activeFocus

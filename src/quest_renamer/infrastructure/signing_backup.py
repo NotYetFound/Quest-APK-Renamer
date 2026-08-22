@@ -21,6 +21,7 @@ from quest_renamer.domain.signing import (
     SigningState,
 )
 from quest_renamer.infrastructure.process_runner import CommandFailed, ProcessRunner
+from quest_renamer.infrastructure.signing_identity import signing_identity_is_incomplete
 
 KEYSTORE_NAME = "quest-renamer.p12"
 METADATA_NAME = "identity.json"
@@ -79,7 +80,7 @@ class SigningIdentityManager:
         key_exists = self.keystore.is_file()
         metadata_exists = self.metadata.is_file()
         if not key_exists and not metadata_exists:
-            if self.root.exists() and any(self.root.iterdir()):
+            if signing_identity_is_incomplete(self.root):
                 return SigningState(
                     True,
                     False,

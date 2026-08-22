@@ -7,16 +7,16 @@ from collections.abc import Callable, Mapping
 from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
-from urllib.error import HTTPError, URLError
-from urllib.request import Request
+from typing import TYPE_CHECKING, Protocol, cast
 
 from quest_renamer.domain.releases import (
     ReleaseCheckResult,
     parse_release_version,
     select_latest_release,
 )
-from quest_renamer.infrastructure.trusted_https import trusted_urlopen
+
+if TYPE_CHECKING:
+    from urllib.request import Request
 
 
 class ReleaseResponse(Protocol):
@@ -26,7 +26,7 @@ class ReleaseResponse(Protocol):
     def close(self) -> None: ...
 
 
-ReleaseOpener = Callable[[Request, float], ReleaseResponse]
+ReleaseOpener = Callable[["Request", float], ReleaseResponse]
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +38,9 @@ class UpdateChannel:
 
 
 def _default_open(request: Request, timeout: float) -> ReleaseResponse:
+    # urllib/ssl are only needed when a check actually runs (≥1 s after startup).
+    from quest_renamer.infrastructure.trusted_https import trusted_urlopen
+
     return cast(ReleaseResponse, trusted_urlopen(request, timeout))
 
 
@@ -71,6 +74,8 @@ class GitHubReleaseChecker:
         self._timeout = timeout
 
     def _fetch_json(self, url: str) -> object:
+        from urllib.request import Request
+
         request = Request(
             url,
             headers={
@@ -92,13 +97,7 @@ class GitHubReleaseChecker:
                 releases,
                 tag_prefix=self._channel.tag_prefix,
             )
-        except (
-            HTTPError,
-            URLError,
-            OSError,
-            json.JSONDecodeError,
-            ValueError,
-        ) as release_error:
+        except (OSError, json.JSONDecodeError, ValueError) as release_error:
             try:
                 tags = self._fetch_json(self._channel.tags_api)
                 if not isinstance(tags, list):
@@ -117,13 +116,7 @@ class GitHubReleaseChecker:
                     tag_payloads,
                     tag_prefix=self._channel.tag_prefix,
                 )
-            except (
-                HTTPError,
-                URLError,
-                OSError,
-                json.JSONDecodeError,
-                ValueError,
-            ) as tag_error:
+            except (OSError, json.JSONDecodeError, ValueError) as tag_error:
                 raise OSError(
                     f"GitHub release and tag checks failed: {release_error}; {tag_error}"
                 ) from tag_error

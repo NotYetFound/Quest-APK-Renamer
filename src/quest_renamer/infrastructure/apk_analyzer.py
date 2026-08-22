@@ -69,6 +69,29 @@ def parse_decoded_manifest(path: Path) -> ManifestAnalysis:
     )
 
 
+def parse_apktool_metadata(path: Path) -> dict[str, str]:
+    """Read version/SDK values that recent Apktool releases keep in apktool.yml."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+
+    def grab(pattern: str) -> str:
+        match = re.search(pattern, text, re.MULTILINE)
+        return match.group(1).strip() if match else ""
+
+    return {
+        "min_sdk": grab(r"^\s*minSdkVersion:\s*['\"]?([^'\"\n]+)"),
+        "target_sdk": grab(r"^\s*targetSdkVersion:\s*['\"]?([^'\"\n]+)"),
+        "version_code": grab(r"^\s*versionCode:\s*['\"]?([^'\"\n]+)"),
+        "version_name": grab(r"^\s*versionName:\s*['\"]?([^'\"\n]+)"),
+    }
+
+
+_DEX_NAME = re.compile(r"classes(?:\d+)?\.dex")
+_NATIVE_LIB = re.compile(r"^lib/([^/]+)/[^/]+\.so$")
+
+
 def inspect_apk_archive(apk: Path) -> ArchiveAnalysis:
     abis: set[str] = set()
     dex_files = 0
@@ -80,9 +103,9 @@ def inspect_apk_archive(apk: Path) -> ArchiveAnalysis:
                 name = item.filename
                 if name.replace("\\", "/").strip("/") == LEGACY_LOADER_ENTRY:
                     has_legacy_loader = True
-                if re.fullmatch(r"classes(?:\d+)?\.dex", name):
+                if _DEX_NAME.fullmatch(name):
                     dex_files += 1
-                if match := re.match(r"^lib/([^/]+)/[^/]+\.so$", name):
+                if match := _NATIVE_LIB.match(name):
                     abis.add(match.group(1))
                     native_libraries += 1
     except (OSError, zipfile.BadZipFile) as exc:
@@ -190,6 +213,9 @@ class ApktoolAnalyzer:
                     log=log,
                 )
                 manifest = parse_decoded_manifest(decoded / "AndroidManifest.xml")
+                # Apktool 2.9+/3.x strips versionCode/versionName and <uses-sdk> from
+                # the decoded manifest and records them in apktool.yml instead.
+                metadata = parse_apktool_metadata(decoded / "apktool.yml")
         except OSError as exc:
             raise ApkAnalysisError(f"Analysis workspace could not be created: {exc}") from exc
 
@@ -199,11 +225,11 @@ class ApktoolAnalyzer:
         return ApkAnalysis(
             apk=apk,
             package_name=manifest.package_name,
-            version_code=manifest.version_code,
-            version_name=manifest.version_name,
+            version_code=manifest.version_code or metadata.get("version_code", ""),
+            version_name=manifest.version_name or metadata.get("version_name", ""),
             app_label=manifest.app_label,
-            min_sdk=manifest.min_sdk,
-            target_sdk=manifest.target_sdk,
+            min_sdk=manifest.min_sdk or metadata.get("min_sdk", ""),
+            target_sdk=manifest.target_sdk or metadata.get("target_sdk", ""),
             permissions=manifest.permissions,
             features=manifest.features,
             abis=archive.abis,

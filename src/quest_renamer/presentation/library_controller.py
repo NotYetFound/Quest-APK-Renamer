@@ -41,6 +41,9 @@ def _write_system_clipboard(value: str) -> bool:
 
 class LibraryController(QObject):
     changed = Signal()
+    # Fired only when the visible row list is rebuilt or the view switches, so the
+    # QML ListView keeps its delegates (and scroll position) on selection changes.
+    rowsChanged = Signal()
     activityMessage = Signal(str)
     inventoryReady = Signal(int, str, object, str)
     archiveReady = Signal(str, object, str)
@@ -68,6 +71,7 @@ class LibraryController(QObject):
         self._selected_profile_id = self._profiles[0].id if self._profiles else ""
         self._selected_package = ""
         self._show_installed = True
+        self._user_chose_view = False
         self._connected = False
         self._device_serial = ""
         self._device_model = ""
@@ -93,9 +97,17 @@ class LibraryController(QObject):
         self.inventoryReady.connect(self._apply_inventory)
         self.archiveReady.connect(self._apply_archive_result)
 
-    @Property(list, notify=changed)
+    @Property(list, notify=rowsChanged)
     def rows(self) -> list[dict[str, str | bool]]:
         return self._installed_rows if self._show_installed else self._saved_rows
+
+    def _emit_rows(self) -> None:
+        self.rowsChanged.emit()
+        self.changed.emit()
+
+    def key_ready(self, profile_id_value: str) -> bool:
+        """Cached key health for a saved profile (no hashing on the caller's path)."""
+        return self._key_health.get(profile_id_value, False)
 
     @Property(int, notify=changed)
     def count(self) -> int:
@@ -115,8 +127,9 @@ class LibraryController(QObject):
         if enabled == self._show_installed:
             return
         self._show_installed = enabled
+        self._user_chose_view = True
         self._action_text = ""
-        self.changed.emit()
+        self._emit_rows()
 
     @Property(bool, notify=changed)
     def isConnected(self) -> bool:
@@ -234,6 +247,18 @@ class LibraryController(QObject):
         self._action_text = ""
         self.changed.emit()
 
+    @Slot(int)
+    def selectOffset(self, offset: int) -> None:
+        """Move the selection up or down by ``offset`` rows (keyboard navigation)."""
+        rows = self._installed_rows if self._show_installed else self._saved_rows
+        if not rows:
+            return
+        ids = [str(row["id"]) for row in rows]
+        current = self._selected_package if self._show_installed else self._selected_profile_id
+        index = ids.index(current) if current in ids else -1
+        target = max(0, min(len(ids) - 1, index + offset if index >= 0 else 0))
+        self.select(ids[target])
+
     @Slot(object)
     def setDevice(self, raw_snapshot: object) -> None:
         if not isinstance(raw_snapshot, DeviceSnapshot):
@@ -248,6 +273,8 @@ class LibraryController(QObject):
             )
             self._scan_generation += 1
             self._connected = False
+            # A fresh connection later may pick the live view again.
+            self._user_chose_view = False
             self._device_serial = ""
             self._device_model = ""
             self._loaded_serial = ""
@@ -257,7 +284,7 @@ class LibraryController(QObject):
             self._loading = False
             self._error = ""
             if changed:
-                self.changed.emit()
+                self._emit_rows()
             return
         new_device = raw_snapshot.serial != self._device_serial
         model_changed = raw_snapshot.model != self._device_model
@@ -272,9 +299,10 @@ class LibraryController(QObject):
             self._selected_package = ""
             self._loading = False
             self._error = ""
-            self._show_installed = True
+            if not self._user_chose_view:
+                self._show_installed = True
         if new_device or model_changed:
-            self.changed.emit()
+            self._emit_rows()
         if new_device or self._loaded_serial != raw_snapshot.serial:
             self.refresh()
 
@@ -339,7 +367,7 @@ class LibraryController(QObject):
                 f"Library refreshed: {len(self._apps)} user-installed app"
                 f"{'s' if len(self._apps) != 1 else ''} found on {self.deviceLabel}."
             )
-        self.changed.emit()
+        self._emit_rows()
 
     @Slot()
     def openKeyFolder(self) -> None:
@@ -480,9 +508,11 @@ class LibraryController(QObject):
             try:
                 result: object = export_library_archive(destination, profiles)
                 error = ""
-            except (LibraryArchiveError, OSError) as exc:
+            except Exception as exc:  # busy flag must always clear
                 result = None
-                error = str(exc)
+                error = str(exc) if isinstance(exc, (LibraryArchiveError, OSError)) else (
+                    f"The archive could not be created: {exc}"
+                )
             self.archiveReady.emit("export", result, error)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -505,9 +535,11 @@ class LibraryController(QObject):
                     existing_ids,
                 )
                 error = ""
-            except (LibraryArchiveError, OSError) as exc:
+            except Exception as exc:  # busy flag must always clear
                 result = None
-                error = str(exc)
+                error = str(exc) if isinstance(exc, (LibraryArchiveError, OSError)) else (
+                    f"The archive could not be checked: {exc}"
+                )
             self.archiveReady.emit("inspect", result, error)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -526,9 +558,11 @@ class LibraryController(QObject):
             try:
                 result: object = import_library_archive(source, self._signing_root)
                 error = ""
-            except (LibraryArchiveError, OSError) as exc:
+            except Exception as exc:  # busy flag must always clear
                 result = None
-                error = str(exc)
+                error = str(exc) if isinstance(exc, (LibraryArchiveError, OSError)) else (
+                    f"The archive could not be imported: {exc}"
+                )
             self.archiveReady.emit("import", result, error)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -551,7 +585,7 @@ class LibraryController(QObject):
         self._action_text = (
             f"Removed {profile.game_name} from the vault. Its key files were kept."
         )
-        self.changed.emit()
+        self._emit_rows()
         self.activityMessage.emit(f"Saved identity removed from Library: {profile.game_name}")
 
     @Slot(str, object, str)
@@ -621,7 +655,7 @@ class LibraryController(QObject):
                 f"Imported {len(imported)} saved "
                 f"{'identity' if len(imported) == 1 else 'identities'}."
             )
-            self.changed.emit()
+            self._emit_rows()
             self.activityMessage.emit(self._action_text)
 
     def _set_action(self, message: str) -> None:
@@ -632,7 +666,7 @@ class LibraryController(QObject):
     def refreshKeyHealth(self) -> None:
         """Recheck saved key files after backup/restore or an external file change."""
         self._refresh_profile_cache()
-        self.changed.emit()
+        self._emit_rows()
 
     def record_build(
         self,
@@ -748,7 +782,7 @@ class LibraryController(QObject):
             )
             self._refresh_app_cache()
             self._selected_package = result.package_name
-            self.changed.emit()
+            self._emit_rows()
         return profile
 
     def _replace(self, profile: GameProfile) -> None:
@@ -757,7 +791,7 @@ class LibraryController(QObject):
         self._selected_profile_id = profile.id
         if self.installed_app(profile.target_package) is not None:
             self._selected_package = profile.target_package
-        self.changed.emit()
+        self._emit_rows()
 
     def _installed_row(self, app: InstalledQuestApp) -> dict[str, str | bool]:
         profile = self.profile_for_installed(app.package_name)

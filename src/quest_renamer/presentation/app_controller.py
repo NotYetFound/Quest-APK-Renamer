@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PySide6 import __version__ as pyside_version
 from PySide6.QtCore import Property, QObject, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtGui import QDesktopServices
 
 from quest_renamer import __version__
 from quest_renamer.domain.analysis import ApkAnalysis
@@ -53,6 +53,12 @@ from quest_renamer.infrastructure.managed_outputs import (
 from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
 from quest_renamer.presentation.library_controller import LibraryController
+from quest_renamer.presentation.shared import (
+    format_bytes,
+    local_path_from_url,
+    unique_numbered_path,
+    write_system_clipboard,
+)
 from quest_renamer.services.contracts import (
     ApkAnalyzer,
     BuildEngine,
@@ -86,6 +92,7 @@ class InstallOutcome:
     error: str = ""
     cancelled: bool = False
     failed_obbs: tuple[Path, ...] = ()
+    apk_installed: bool = False
     conflict_package: str = ""
 
 
@@ -112,15 +119,6 @@ class SigningOperationOutcome:
     error: str = ""
 
 
-def _format_bytes(value: int) -> str:
-    amount = float(value)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if amount < 1000 or unit == "TB":
-            return f"{amount:.1f} {unit}" if unit != "B" else f"{int(amount)} B"
-        amount /= 1000
-    return f"{value} B"
-
-
 class AppController(QObject):
     bundleChanged = Signal()
     packageIdChanged = Signal()
@@ -141,6 +139,9 @@ class AppController(QObject):
     outputCleanupConfirmationRequested = Signal(str, str, str)
     outputConflictRequested = Signal(str, str)
     packageConflictRequested = Signal(str)
+    # Emitted when the Quest refused the APK because of a signing or version
+    # conflict that only an uninstall can resolve.
+    uninstallSuggested = Signal(str, str)
     signingBackupReminderRequested = Signal()
     signingBackupCompletedRequested = Signal(str)
     signingRestoreConfirmationRequested = Signal(str)
@@ -150,6 +151,11 @@ class AppController(QObject):
     workerLogReady = Signal(str)
     settingsChanged = Signal()
     activityChanged = Signal()
+    # Progress ticks are frequent; they get their own notify so the readiness
+    # bindings (which hash keys and stat folders) are not re-evaluated per tick.
+    progressChanged = Signal()
+    partialDiscardReady = Signal(object)
+    wirelessOutcomeReady = Signal(object)
 
     def __init__(
         self,
@@ -222,6 +228,12 @@ class AppController(QObject):
         self._install_started_at = 0.0
         self._install_log_step = ""
         self._retry_bundle: BundleDraft | None = None
+        self._retry_full_bundle: BundleDraft | None = None
+        self._uninstall_candidate: BundleDraft | None = None
+        self._retry_reinstall = False
+        self._built_request: BuildRequest | None = None
+        self._preflight_failed = False
+        self._signing_state_cache: object | None = None
         self._pending_conflict_bundle: BundleDraft | None = None
         self._pending_library_profile_id = ""
         self._pending_library_package = ""
@@ -240,10 +252,27 @@ class AppController(QObject):
             detail="Looking for a connected headset.",
         )
         self._device_check_running = False
+        self._wireless_busy = False
+        self._wireless_status = ""
+        self._wireless_tone = "neutral"
+        preferred = getattr(self._device_service, "set_preferred_serial", None)
+        if callable(preferred) and self._settings.preferred_device_serial:
+            preferred(self._settings.preferred_device_serial)
         self._activity: deque[str] = deque(self._activity_log.tail(), maxlen=400)
         self._device_timer = QTimer(self)
         self._device_timer.setInterval(12_000)
         self._device_timer.timeout.connect(self.refreshDevice)
+        # Coalesce bursts of worker log lines into one QML refresh.
+        self._activity_timer = QTimer(self)
+        self._activity_timer.setInterval(80)
+        self._activity_timer.setSingleShot(True)
+        self._activity_timer.timeout.connect(self.activityChanged.emit)
+        # Drives the elapsed-time label while an operation runs.
+        self._elapsed_timer = QTimer(self)
+        self._elapsed_timer.setInterval(1_000)
+        self._elapsed_timer.timeout.connect(self.progressChanged.emit)
+        self.partialDiscardReady.connect(self._apply_partial_discard)
+        self.wirelessOutcomeReady.connect(self._apply_wireless_outcome)
         self.deviceSnapshotReady.connect(self._apply_device_snapshot)
         self.analysisProgressReady.connect(self._apply_analysis_progress)
         self.analysisOutcomeReady.connect(self._apply_analysis_outcome)
@@ -286,6 +315,8 @@ class AppController(QObject):
         if self._library_identity_error():
             return False
         if self._analyzer is not None and self._analysis_state != "ready":
+            return False
+        if self._preflight_failed:
             return False
         if self._preflight is None or self._preflight.ready:
             return True
@@ -358,11 +389,11 @@ class AppController(QObject):
     def isInstalling(self) -> bool:
         return self._install_state == "running"
 
-    @Property(float, notify=readinessChanged)
+    @Property(float, notify=progressChanged)
     def installProgress(self) -> float:
         return self._install_progress
 
-    @Property(str, notify=readinessChanged)
+    @Property(str, notify=progressChanged)
     def installLabel(self) -> str:
         return self._install_message or "Installing APK"
 
@@ -393,31 +424,98 @@ class AppController(QObject):
     def canRetryObbs(self) -> bool:
         return self._retry_bundle is not None and not self.isBusy
 
+    @Property(bool, notify=readinessChanged)
+    def hasBuildResult(self) -> bool:
+        return self._build_result is not None
+
+    @Property(str, notify=progressChanged)
+    def operationElapsed(self) -> str:
+        """Elapsed time of the running analysis, build, or install; empty when idle."""
+        if self._install_state == "running":
+            started = self._install_started_at
+        elif self._build_state == "running":
+            started = self._build_started_at
+        elif self._analysis_state == "running":
+            started = self._analysis_started_at
+        else:
+            return ""
+        seconds = int(max(0.0, time.monotonic() - started))
+        minutes, rest = divmod(seconds, 60)
+        return f"{minutes}:{rest:02d}"
+
+    def _sync_elapsed_timer(self) -> None:
+        running = (
+            self._install_state == "running"
+            or self._build_state == "running"
+            or self._analysis_state == "running"
+        )
+        if running and not self._elapsed_timer.isActive():
+            self._elapsed_timer.start()
+        elif not running and self._elapsed_timer.isActive():
+            self._elapsed_timer.stop()
+        self.progressChanged.emit()
+
+    @Property(str, notify=settingsChanged)
+    def lastSourceFolder(self) -> str:
+        return self._settings.last_source_folder
+
+    @Property(str, notify=settingsChanged)
+    def lastOutputParent(self) -> str:
+        return self._settings.last_output_parent
+
+    def _remember_folder(self, name: str, folder: Path | None) -> None:
+        """Persist a dialog start folder quietly; failures only reach the log."""
+        if folder is None:
+            return
+        try:
+            updated = self._settings.with_value(name, str(folder))
+        except (KeyError, TypeError):
+            return
+        if updated == self._settings:
+            return
+        try:
+            self._settings_store.save(updated)
+        except OSError as exc:
+            self._record_activity(f"Recent folder could not be saved: {exc}")
+            return
+        self._settings = updated
+        self.settingsChanged.emit()
+
+    def _signing_state(self) -> object | None:
+        """Cached signing state; hashing the keystore on every binding pass is costly."""
+        if self._signing_manager is None:
+            return None
+        if self._signing_state_cache is None:
+            self._signing_state_cache = self._signing_manager.state()
+        return self._signing_state_cache
+
+    def _emit_signing_changed(self) -> None:
+        self._signing_state_cache = None
+        self.signingChanged.emit()
+
     @Property(str, notify=signingChanged)
     def signingStatus(self) -> str:
         if self._signing_busy:
             return "Working with the signing identity…"
-        if self._signing_manager is None:
+        state = self._signing_state()
+        if state is None:
             return "Signing-key management is unavailable"
-        return self._signing_manager.state().detail
+        return str(getattr(state, "detail", ""))
 
     @Property(bool, notify=readinessChanged)
     def canBackupSigningKey(self) -> bool:
-        return (
-            self._signing_manager is not None
-            and self._signing_manager.state().complete
-            and not self.isBusy
-        )
+        state = self._signing_state()
+        return bool(state is not None and getattr(state, "complete", False) and not self.isBusy)
 
     @Property(bool, notify=readinessChanged)
     def canRestoreSigningKey(self) -> bool:
         return self._signing_manager is not None and not self.isBusy
 
-    @Property(float, notify=readinessChanged)
+    @Property(float, notify=progressChanged)
     def buildProgress(self) -> float:
         return self._build_progress
 
-    @Property(str, notify=readinessChanged)
+    @Property(str, notify=progressChanged)
     def buildLabel(self) -> str:
         if self._build_message:
             return self._build_message
@@ -455,11 +553,11 @@ class AppController(QObject):
     def isAnalyzing(self) -> bool:
         return self._analysis_state == "running"
 
-    @Property(float, notify=readinessChanged)
+    @Property(float, notify=progressChanged)
     def analysisProgress(self) -> float:
         return self._analysis_progress
 
-    @Property(str, notify=readinessChanged)
+    @Property(str, notify=progressChanged)
     def analysisLabel(self) -> str:
         if self._analysis_state == "running":
             return self._analysis_message or "Reading APK"
@@ -491,7 +589,7 @@ class AppController(QObject):
 
     @Property(str, notify=bundleChanged)
     def bundleSize(self) -> str:
-        return _format_bytes(self._bundle.total_size) if self._bundle else ""
+        return format_bytes(self._bundle.total_size) if self._bundle else ""
 
     @Property(str, notify=bundleChanged)
     def obbSummary(self) -> str:
@@ -578,12 +676,7 @@ class AppController(QObject):
 
     @staticmethod
     def _numbered_output(output: Path) -> Path:
-        number = 2
-        while True:
-            candidate = output.with_name(f"{output.name} ({number})")
-            if not candidate.exists():
-                return candidate
-            number += 1
+        return unique_numbered_path(output)
 
     @Property(bool, notify=readinessChanged)
     def olderFirmwareAvailable(self) -> bool:
@@ -638,6 +731,10 @@ class AppController(QObject):
         if value == self._package_id:
             return
         self._package_id = value
+        if self._build_result is not None:
+            # The finished folder belongs to the previous ID; a new ID means a new build.
+            self._reset_build_presentation()
+            self.readinessChanged.emit()
         if self._matched_library_profile_id and self._library_controller is not None:
             profile = self._library_controller.profile(self._matched_library_profile_id)
             if profile is None or profile.target_package != value:
@@ -706,7 +803,11 @@ class AppController(QObject):
             )
         if not (profile.signing_keystore and profile.signing_metadata):
             return "This saved identity has no signing key. Choose another app ID."
-        if profile.signing_keystore and profile.signing_metadata and not profile.key_available:
+        if (
+            profile.signing_keystore
+            and profile.signing_metadata
+            and not self._library_controller.key_ready(profile.id)
+        ):
             return "The saved signing key is missing or changed. Restore it before updating."
         return ""
 
@@ -752,8 +853,10 @@ class AppController(QObject):
     @Property(str, notify=deviceChanged)
     def deviceLabel(self) -> str:
         title = self._device_title()
+        if self._device.connected and ":" in self._device.serial:
+            title += "  •  Wi-Fi"
         if self._device.connected and self._device.free_bytes is not None:
-            return f"{title}  •  {_format_bytes(self._device.free_bytes)} free"
+            return f"{title}  •  {format_bytes(self._device.free_bytes)} free"
         return title
 
     @Property(str, notify=deviceChanged)
@@ -783,6 +886,9 @@ class AppController(QObject):
             "keyBackupReminder": self._settings.key_backup_reminder,
             "keyBackupFolder": self._settings.key_backup_folder,
             "dismissedUpdate": self._settings.dismissed_update,
+            "defaultTag": self._settings.default_tag,
+            "preferredDeviceSerial": self._settings.preferred_device_serial,
+            "lastWirelessAddress": self._settings.last_wireless_address,
         }
 
     def update_preferences(self) -> tuple[bool, str]:
@@ -790,13 +896,7 @@ class AppController(QObject):
 
     def dismiss_update_version(self, version: str) -> None:
         updated = self._settings.with_value("dismissed_update", version)
-        try:
-            self._settings_store.save(updated)
-        except OSError as exc:
-            self._record_activity(f"Update dismissal could not be saved: {exc}")
-            return
-        self._settings = updated
-        self.settingsChanged.emit()
+        self._commit_settings(updated)
 
     @Property(str, notify=activityChanged)
     def activityText(self) -> str:
@@ -853,15 +953,45 @@ class AppController(QObject):
 
     @Slot()
     def copySupportInformation(self) -> None:
-        if QGuiApplication.instance() is None:
+        if not write_system_clipboard(self._support_information()):
             self._set_notice("The clipboard is unavailable in this session.", "warning")
             return
-        QGuiApplication.clipboard().setText(self._support_information())
         self._set_notice(
             "Support information copied. Review local paths before sharing it.",
             "success",
         )
         self._record_event("SUPPORT", "Support information copied to the clipboard")
+
+    @Slot(str)
+    def copyText(self, value: str) -> None:
+        """Copy any short piece of UI text (package IDs, paths, errors) to the clipboard."""
+        if not value:
+            return
+        if not write_system_clipboard(value):
+            self._set_notice("The clipboard is unavailable in this session.", "warning")
+            return
+        self._set_notice("Copied to the clipboard.", "success")
+
+    @Slot()
+    def openSourceFolder(self) -> None:
+        if self._bundle is None:
+            return
+        root = self._bundle.root
+        self._open_local_path(root if root.is_dir() else root.parent, "source folder")
+
+    @Slot()
+    def openOutputFolder(self) -> None:
+        """Open the finished output, or its parent while the build does not exist yet."""
+        if self._build_result is not None and self._build_result.output_root.is_dir():
+            self._open_local_path(self._build_result.output_root, "finished folder")
+            return
+        output = self._output_folder()
+        if output is None:
+            return
+        if output.is_dir():
+            self._open_local_path(output, "save location")
+        else:
+            self._open_local_path(output.parent, "save location")
 
     def _record_activity(self, message: str) -> None:
         prefixes = {
@@ -875,7 +1005,7 @@ class AppController(QObject):
             self._record_event(prefixes[prefix], detail)
             return
         self._activity.append(self._activity_log.append(message))
-        self.activityChanged.emit()
+        self._schedule_activity_refresh()
 
     def _record_event(
         self,
@@ -884,7 +1014,11 @@ class AppController(QObject):
         details: tuple[tuple[str, str], ...] = (),
     ) -> None:
         self._activity.extend(self._activity_log.append_event(category, title, details))
-        self.activityChanged.emit()
+        self._schedule_activity_refresh()
+
+    def _schedule_activity_refresh(self) -> None:
+        if not self._activity_timer.isActive():
+            self._activity_timer.start()
 
     @staticmethod
     def _elapsed(started_at: float) -> str:
@@ -917,7 +1051,14 @@ class AppController(QObject):
         threading.Thread(target=self._device_worker, daemon=True).start()
 
     def _device_worker(self) -> None:
-        snapshot = self._device_service.snapshot()
+        try:
+            snapshot = self._device_service.snapshot()
+        except Exception as exc:  # the poll must never wedge the "checking" state
+            snapshot = DeviceSnapshot(
+                False,
+                status="error",
+                detail=f"The device check failed: {exc}",
+            )
         self.deviceSnapshotReady.emit(snapshot)
 
     @Slot(object)
@@ -925,13 +1066,31 @@ class AppController(QObject):
         self._device_check_running = False
         if not isinstance(snapshot, DeviceSnapshot):
             return
-        previous = (self._device.status, self._device.serial, self._device.free_bytes)
-        current = (snapshot.status, snapshot.serial, snapshot.free_bytes)
+        previous = (self._device.status, self._device.serial)
+        current = (snapshot.status, snapshot.serial)
+        previous_free = self._device.free_bytes
         self._device = snapshot
+        if snapshot.connected and ":" in snapshot.serial and snapshot.model:
+            saved = next(
+                (
+                    item
+                    for item in self._settings.wireless_devices
+                    if item["address"] == snapshot.serial
+                ),
+                None,
+            )
+            if saved is not None and saved.get("label") != snapshot.model:
+                self._commit_settings(
+                    self._settings.with_wireless_device(snapshot.serial, snapshot.model)
+                )
         self.deviceChanged.emit()
         if self._library_controller is not None:
             self._library_controller.setDevice(snapshot)
-        self._refresh_preflight()
+        # A routine poll must not overwrite whatever result the user is reading.
+        if current != previous or previous_free != snapshot.free_bytes:
+            self._refresh_preflight(preserve_notice=True)
+        else:
+            self.readinessChanged.emit()
         if current != previous:
             self._record_activity(f"Device: {self._device_title()}. {snapshot.detail}")
 
@@ -947,22 +1106,30 @@ class AppController(QObject):
             return
         if updated == self._settings:
             return
+        if not self._commit_settings(updated):
+            return
+        self._refresh_preflight(preserve_notice=self._build_result is not None)
+        self._record_activity(f"Setting changed: {name} = {value}")
+
+    def _commit_settings(self, updated: object) -> bool:
+        """Persist a settings change; on failure show the error and keep the old value."""
         try:
-            self._settings_store.save(updated)
+            self._settings_store.save(updated)  # type: ignore[arg-type]
         except OSError as exc:
             self._set_notice(f"Settings could not be saved: {exc}", "error")
             self._record_activity(f"Settings save failed: {exc}")
-            return
-        self._settings = updated
+            self.settingsChanged.emit()
+            return False
+        self._settings = updated  # type: ignore[assignment]
         self.settingsChanged.emit()
-        self._refresh_preflight()
-        self._record_activity(f"Setting changed: {name} = {value}")
+        return True
 
     @Slot(QUrl)
     def setDefaultKeyBackupFolder(self, url: QUrl) -> None:
-        local = url.toLocalFile() if url.isLocalFile() else url.toString()
-        if not local:
+        local_path = local_path_from_url(url)
+        if local_path is None:
             return
+        local = str(local_path)
         folder = Path(local).expanduser().resolve()
         if not folder.is_dir():
             self._set_notice("Choose an existing folder for automatic key backups.", "error")
@@ -976,13 +1143,8 @@ class AppController(QObject):
                 )
                 return
         updated = self._settings.with_value("key_backup_folder", str(folder))
-        try:
-            self._settings_store.save(updated)
-        except OSError as exc:
-            self._set_notice(f"Settings could not be saved: {exc}", "error")
+        if not self._commit_settings(updated):
             return
-        self._settings = updated
-        self.settingsChanged.emit()
         self._set_notice("Automatic signing-key backup location saved.", "success")
         self._record_activity(f"Automatic signing-key backup folder set: {folder}")
         if self._signing_manager is not None:
@@ -998,13 +1160,8 @@ class AppController(QObject):
     @Slot()
     def clearDefaultKeyBackupFolder(self) -> None:
         updated = self._settings.with_value("key_backup_folder", "")
-        try:
-            self._settings_store.save(updated)
-        except OSError as exc:
-            self._set_notice(f"Settings could not be saved: {exc}", "error")
+        if not self._commit_settings(updated):
             return
-        self._settings = updated
-        self.settingsChanged.emit()
         self._set_notice("Automatic signing-key backup location cleared.")
         self._record_activity("Automatic signing-key backup folder cleared.")
 
@@ -1034,20 +1191,11 @@ class AppController(QObject):
         if enabled:
             # A replacement must carry every expansion file forward.
             updated = updated.with_value("copy_obbs", True)
-        try:
-            self._settings_store.save(updated)
-        except OSError as exc:
-            self._set_notice(f"Settings could not be saved: {exc}", "error")
-            self._record_activity(f"Settings save failed: {exc}")
-            self.settingsChanged.emit()
+        if not self._commit_settings(updated):
             return
-        self._settings = updated
-        self._build_result = None
-        self._build_state = "idle"
-        self._build_progress = 0.0
+        self._reset_build_presentation()
         self._output_override = None
         self._pending_output_conflict = None
-        self.settingsChanged.emit()
         self.outputChanged.emit()
         self.readinessChanged.emit()
         self._refresh_preflight()
@@ -1090,7 +1238,7 @@ class AppController(QObject):
     def logPath(self) -> str:
         return str(self._paths.log_file)
 
-    @Property(str, constant=True)
+    @Property(str, notify=activityChanged)
     def logExportFileName(self) -> str:
         return f"Quest-APK-Renamer-{dt.datetime.now():%Y%m%d-%H%M%S}.log"
 
@@ -1126,9 +1274,10 @@ class AppController(QObject):
 
     @Slot(QUrl)
     def exportLog(self, url: QUrl) -> None:
-        local = url.toLocalFile() if url.isLocalFile() else url.toString()
-        if not local:
+        local_path = local_path_from_url(url)
+        if local_path is None:
             return
+        local = str(local_path)
         destination = Path(local).expanduser()
         try:
             self._activity_log.export(destination)
@@ -1143,9 +1292,10 @@ class AppController(QObject):
     def requestOldOutputCleanup(self, url: QUrl) -> None:
         if self.isBusy:
             return
-        local = url.toLocalFile() if url.isLocalFile() else url.toString()
-        if not local:
+        local_path = local_path_from_url(url)
+        if local_path is None:
             return
+        local = str(local_path)
         try:
             output = inspect_managed_output(Path(local))
         except (ManagedOutputError, OSError) as exc:
@@ -1159,7 +1309,7 @@ class AppController(QObject):
         self._pending_old_output = output
         self.outputCleanupConfirmationRequested.emit(
             str(output.root),
-            _format_bytes(output.total_size),
+            format_bytes(output.total_size),
             output.package_name,
         )
 
@@ -1179,7 +1329,7 @@ class AppController(QObject):
                 ("Folder", str(output.root)),
                 ("Package", output.package_name),
                 ("Files", str(output.file_count)),
-                ("Size", _format_bytes(output.total_size)),
+                ("Size", format_bytes(output.total_size)),
             ),
         )
         threading.Thread(
@@ -1237,7 +1387,7 @@ class AppController(QObject):
         self._record_event(
             "CLEANUP",
             "Old output moved to Trash",
-            (("Folder", str(output.root)), ("Size", _format_bytes(output.total_size))),
+            (("Folder", str(output.root)), ("Size", format_bytes(output.total_size))),
         )
         self.readinessChanged.emit()
 
@@ -1290,9 +1440,10 @@ class AppController(QObject):
                 "warning",
             )
             return
-        local = url.toLocalFile() if url.isLocalFile() else url.toString()
-        if not local:
+        local_path = local_path_from_url(url)
+        if local_path is None:
             return
+        local = str(local_path)
         parent = Path(local).expanduser().resolve()
         if not parent.is_dir():
             self._set_notice("Choose an existing folder to save the renamed copy in.", "error")
@@ -1300,8 +1451,8 @@ class AppController(QObject):
         self._output_parent = parent
         self._output_override = None
         self._pending_output_conflict = None
-        self._build_result = None
-        self._build_state = "idle"
+        self._reset_build_presentation()
+        self._remember_folder("last_output_parent", parent)
         self.outputChanged.emit()
         self.readinessChanged.emit()
         self._refresh_preflight()
@@ -1309,9 +1460,16 @@ class AppController(QObject):
 
     @Slot(QUrl)
     def chooseFolder(self, url: QUrl) -> None:
-        local = url.toLocalFile() if url.isLocalFile() else url.toString()
-        if not local:
+        if self.has_active_work() or self._external_busy_provider():
+            self._set_notice(
+                "Wait for the current operation to finish before choosing another source.",
+                "warning",
+            )
             return
+        local_path = local_path_from_url(url)
+        if local_path is None:
+            return
+        local = str(local_path)
         source = Path(local)
         try:
             bundle = (
@@ -1330,24 +1488,25 @@ class AppController(QObject):
 
         self._bundle = bundle
         self._preflight = None
-        self._build_result = None
-        self._build_state = "idle"
+        self._preflight_failed = False
+        self._reset_build_presentation()
         self._install_state = "idle"
         self._install_progress = 0.0
         self._install_message = ""
+        self._retry_bundle = None
+        self._retry_full_bundle = None
+        self._last_failure_report = None
         self._output_parent = bundle.root.parent
+        self._remember_folder(
+            "last_source_folder",
+            bundle.root.parent if bundle.root.parent != bundle.root else bundle.root,
+        )
         self._output_override = None
         self._pending_output_conflict = None
         self._older_firmware_supported = False
         self._matched_library_profile_id = ""
         self._direct_library_update_package = ""
-        if bundle.package_name:
-            try:
-                self._package_id = with_tag(bundle.package_name, "dev")
-            except ValueError:
-                self._package_id = ""
-        else:
-            self._package_id = ""
+        self._package_id = self._suggested_package(bundle.package_name)
         self.bundleChanged.emit()
         self.outputChanged.emit()
         self.packageIdChanged.emit()
@@ -1359,7 +1518,7 @@ class AppController(QObject):
                 ("Folder", str(bundle.root)),
                 ("APK", bundle.apk.name),
                 ("Expansion files", str(len(bundle.obbs))),
-                ("Total size", _format_bytes(bundle.total_size)),
+                ("Total size", format_bytes(bundle.total_size)),
                 ("Detected package", bundle.package_name or "Waiting for APK analysis"),
             ),
         )
@@ -1388,6 +1547,7 @@ class AppController(QObject):
         self._set_notice("Checking the APK and preparing a safe build…")
         self._record_event("ANALYSIS", "APK analysis started", (("APK", str(bundle.apk)),))
         self.readinessChanged.emit()
+        self._sync_elapsed_timer()
         threading.Thread(
             target=self._analysis_worker,
             args=(generation, bundle.apk, token),
@@ -1425,7 +1585,7 @@ class AppController(QObject):
                 message,
                 (("Progress", f"{round(self._analysis_progress * 100)}%"),),
             )
-        self.readinessChanged.emit()
+        self.progressChanged.emit()
 
     @Slot(int, object)
     def _apply_analysis_outcome(self, generation: int, raw_outcome: object) -> None:
@@ -1435,6 +1595,9 @@ class AppController(QObject):
             return
         self._analysis_token = None
         if raw_outcome.cancelled:
+            self._analysis_state = "idle"
+            self._sync_elapsed_timer()
+            self.readinessChanged.emit()
             return
         if raw_outcome.result is None:
             self._analysis_state = "error"
@@ -1446,9 +1609,19 @@ class AppController(QObject):
                 "APK analysis failed",
                 (("After", self._elapsed(self._analysis_started_at)), ("Reason", detail)),
             )
+            self._sync_elapsed_timer()
             self.readinessChanged.emit()
             return
-        if self._bundle is None or self._bundle.apk != raw_outcome.result.apk:
+        if self._bundle is None or not self._same_file(
+            self._bundle.apk, raw_outcome.result.apk
+        ):
+            # The generation matched, so this is the current bundle; never leave the
+            # dashboard stuck in "analyzing" because the adapter resolved a symlink.
+            self._analysis_state = "error"
+            self._analysis_progress = 0.0
+            self._set_notice("The analyzed APK no longer matches the selected source.", "error")
+            self._sync_elapsed_timer()
+            self.readinessChanged.emit()
             return
 
         result = raw_outcome.result
@@ -1481,14 +1654,12 @@ class AppController(QObject):
             signer_identity=result.signer_identity,
             signer_lineage=result.signer_lineage,
         )
-        try:
-            self._package_id = with_tag(result.package_name, "dev")
-        except ValueError:
-            self._package_id = ""
+        self._package_id = self._suggested_package(result.package_name)
         library_handled = self._restore_library_identity(result.package_name)
         self._analysis_state = "ready"
         self._analysis_progress = 1.0
         self._analysis_message = "APK checked"
+        self._sync_elapsed_timer()
         self.bundleChanged.emit()
         self.packageIdChanged.emit()
         self._record_event(
@@ -1513,6 +1684,315 @@ class AppController(QObject):
             ),
         )
         self._refresh_preflight(preserve_notice=library_handled)
+
+    def _suggested_package(self, original: str) -> str:
+        """Original package plus the user's default tag (``.dev`` unless changed)."""
+        if not original:
+            return ""
+        for tag in (self._settings.default_tag, "dev"):
+            try:
+                return with_tag(original, tag)
+            except ValueError:
+                continue
+        return ""
+
+    @Slot(str)
+    def setDefaultTag(self, value: str) -> None:
+        tag = value.strip().lstrip(".").strip()
+        if not tag:
+            self._set_notice("Enter a tag such as dev, mr, or test.", "warning")
+            self.settingsChanged.emit()
+            return
+        try:
+            with_tag("com.example.game", tag)
+        except ValueError as exc:
+            self._set_notice(str(exc), "error")
+            self.settingsChanged.emit()
+            return
+        if tag == self._settings.default_tag:
+            return
+        if not self._commit_settings(self._settings.with_value("default_tag", tag)):
+            return
+        self._set_notice(f"New games will be suggested with the .{tag} tag.", "success")
+        self._record_activity(f"Default app ID tag set: .{tag}")
+
+    @Property(list, notify=deviceChanged)
+    def deviceChoices(self) -> list[dict[str, str]]:
+        return [
+            {"serial": serial, "label": label} for serial, label in self._device.candidates
+        ]
+
+    @Property(list, notify=settingsChanged)
+    def savedWirelessDevices(self) -> list[dict[str, str]]:
+        return [dict(item) for item in self._settings.wireless_devices]
+
+    @Property(list, notify=deviceChanged)
+    def deviceMenuEntries(self) -> list[dict[str, object]]:
+        """Rows for the connection dropdown: attached, saved wireless Quests, actions."""
+        entries: list[dict[str, object]] = []
+        current_serial = self._device.serial
+        if self._device.candidates:
+            entries.append({"kind": "header", "label": "Attached devices", "value": ""})
+            for serial, label in self._device.candidates:
+                entries.append(
+                    {
+                        "kind": "attached",
+                        "label": label,
+                        "value": serial,
+                        "checked": serial == self._settings.preferred_device_serial,
+                    }
+                )
+        elif self._device.connected:
+            entries.append({"kind": "header", "label": "Connected", "value": ""})
+            label = self._device_title()
+            if ":" in current_serial:
+                label += f"  •  Wi-Fi {current_serial}"
+            elif current_serial:
+                label += f"  •  {current_serial}"
+            entries.append(
+                {"kind": "attached", "label": label, "value": current_serial, "checked": True}
+            )
+        else:
+            entries.append({"kind": "header", "label": "Quest", "value": ""})
+            entries.append(
+                {
+                    "kind": "hint",
+                    "label": f"{self._device_title()} — {self._device.detail}".rstrip(" —"),
+                    "value": "",
+                }
+            )
+        saved = self._settings.wireless_devices
+        if self.wirelessSupported:
+            entries.append({"kind": "header", "label": "Saved wireless Quests", "value": ""})
+            if saved:
+                for item in saved:
+                    address = item["address"]
+                    name = item.get("label") or "Quest"
+                    entries.append(
+                        {
+                            "kind": "wireless",
+                            "label": name,
+                            "detail": address,
+                            "value": address,
+                            "checked": address == current_serial,
+                        }
+                    )
+            else:
+                entries.append(
+                    {
+                        "kind": "hint",
+                        "label": "None saved yet. Connect once and it appears here.",
+                        "value": "",
+                    }
+                )
+            entries.append({"kind": "separator", "label": "", "value": ""})
+            if self._device.connected and ":" not in current_serial:
+                entries.append(
+                    {"kind": "enable", "label": "Enable wireless ADB over USB", "value": ""}
+                )
+            if ":" in current_serial:
+                entries.append(
+                    {"kind": "disconnect", "label": "Disconnect wireless", "value": ""}
+                )
+            entries.append(
+                {"kind": "settings", "label": "Connect to an address…", "value": ""}
+            )
+        for entry in entries:
+            entry.setdefault("checked", False)
+            entry.setdefault("detail", "")
+        return entries
+
+    @Slot(str, str)
+    def activateDeviceMenuEntry(self, kind: str, value: str) -> None:
+        if kind == "attached":
+            self.selectDevice(value)
+        elif kind == "wireless":
+            if value == self._device.serial and self._device.connected:
+                return
+            self.connectWireless(value)
+        elif kind == "enable":
+            self.enableWirelessOverUsb()
+        elif kind == "disconnect":
+            self.disconnectWireless()
+        elif kind == "refresh":
+            self.refreshDevice()
+
+    @Slot(str)
+    def forgetWirelessDevice(self, address: str) -> None:
+        if not address.strip():
+            return
+        self._commit_settings(self._settings.without_wireless_device(address))
+        self._record_activity(f"Saved wireless Quest forgotten: {address.strip()}")
+        self.deviceChanged.emit()
+
+    @Slot(str, str)
+    def renameWirelessDevice(self, address: str, label: str) -> None:
+        if not address.strip():
+            return
+        self._commit_settings(self._settings.with_wireless_device(address, label))
+        self.deviceChanged.emit()
+
+    @Slot(str)
+    def selectDevice(self, serial: str) -> None:
+        """Pin one of several attached devices; remembered for future sessions."""
+        serial = serial.strip()
+        setter = getattr(self._device_service, "set_preferred_serial", None)
+        if callable(setter):
+            setter(serial)
+        self._commit_settings(self._settings.with_value("preferred_device_serial", serial))
+        self._record_activity(f"Preferred device selected: {serial or 'automatic'}")
+        self.refreshDevice()
+
+    # ------------------------------------------------------------ wireless ADB
+
+    @Property(bool, notify=deviceChanged)
+    def wirelessBusy(self) -> bool:
+        return self._wireless_busy
+
+    @Property(str, notify=deviceChanged)
+    def wirelessStatus(self) -> str:
+        return self._wireless_status
+
+    @Property(str, notify=deviceChanged)
+    def wirelessTone(self) -> str:
+        return self._wireless_tone
+
+    @Property(bool, notify=deviceChanged)
+    def wirelessSupported(self) -> bool:
+        return callable(getattr(self._device_service, "connect_wireless", None))
+
+    @Property(bool, notify=deviceChanged)
+    def isWirelessDevice(self) -> bool:
+        return ":" in self._device.serial
+
+    @Property(str, notify=deviceChanged)
+    def currentSerial(self) -> str:
+        return self._device.serial
+
+    @Slot(str)
+    def connectWireless(self, address: str) -> None:
+        self._start_wireless("connect", address)
+
+    @Slot()
+    def disconnectWireless(self) -> None:
+        address = (
+            self._device.serial if ":" in self._device.serial else ""
+        ) or self._settings.last_wireless_address
+        if not address:
+            self._set_wireless_status("No wireless headset is connected.", "warning")
+            return
+        self._start_wireless("disconnect", address)
+
+    @Slot(str)
+    def disconnectWirelessAddress(self, address: str) -> None:
+        if address.strip():
+            self._start_wireless("disconnect", address.strip())
+
+    @Slot()
+    def disconnectAllWireless(self) -> None:
+        self._start_wireless("disconnect", "")
+
+    @Slot()
+    def forgetAllWirelessDevices(self) -> None:
+        if not self._settings.wireless_devices:
+            return
+        self._commit_settings(self._settings.with_value("wireless_devices", []))
+        self._record_activity("All saved wireless Quests forgotten.")
+        self.deviceChanged.emit()
+
+    @Slot(str)
+    def copyWirelessCommand(self, address: str) -> None:
+        """Copy an ``adb connect`` line for use in a terminal or another tool."""
+        if address.strip():
+            self.copyText(f"adb connect {address.strip()}")
+
+    @Slot()
+    def enableWirelessOverUsb(self) -> None:
+        if not self._device.connected or not self._device.serial or ":" in self._device.serial:
+            self._set_wireless_status(
+                "Connect the headset by USB first, then enable wireless ADB.", "warning"
+            )
+            return
+        self._start_wireless("enable", self._device.serial)
+
+    def _set_wireless_status(self, message: str, tone: str = "neutral") -> None:
+        self._wireless_status = message
+        self._wireless_tone = tone
+        self.deviceChanged.emit()
+
+    def _start_wireless(self, action: str, value: str) -> None:
+        service = self._device_service
+        if self._wireless_busy or not callable(getattr(service, "connect_wireless", None)):
+            return
+        self._wireless_busy = True
+        labels = {
+            "connect": f"Connecting to {value.strip()}…",
+            "disconnect": f"Disconnecting {value or 'all wireless devices'}…",
+            "enable": "Switching the headset to wireless ADB…",
+        }
+        self._set_wireless_status(labels[action])
+
+        def worker() -> None:
+            try:
+                if action == "connect":
+                    detail = service.connect_wireless(value)  # type: ignore[attr-defined]
+                    address = value
+                elif action == "disconnect":
+                    detail = service.disconnect_wireless(value)  # type: ignore[attr-defined]
+                    address = value
+                else:
+                    address = service.enable_wireless(value)  # type: ignore[attr-defined]
+                    detail = f"Connected wirelessly at {address}. You can unplug the cable."
+                self.wirelessOutcomeReady.emit((action, address, detail, ""))
+            except Exception as exc:  # the UI must always leave the busy state
+                self.wirelessOutcomeReady.emit((action, value, "", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(object)
+    def _apply_wireless_outcome(self, raw: object) -> None:
+        if not isinstance(raw, tuple) or len(raw) != 4:
+            return
+        action, address, detail, error = raw
+        self._wireless_busy = False
+        if error:
+            self._set_wireless_status(str(error), "error")
+            self._record_event("DEVICE", f"Wireless ADB {action} failed", (("Reason", error),))
+            return
+        if action in {"connect", "enable"}:
+            normalized = str(address).strip()
+            updated = self._settings.with_value("last_wireless_address", normalized)
+            updated = updated.with_wireless_device(
+                normalized,
+                last_connected=dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M"),
+            )
+            self._commit_settings(updated)
+            setter = getattr(self._device_service, "set_preferred_serial", None)
+            if callable(setter):
+                setter(normalized)
+                self._commit_settings(
+                    self._settings.with_value("preferred_device_serial", normalized)
+                )
+        self._set_wireless_status(str(detail), "success")
+        self._record_event("DEVICE", f"Wireless ADB {action}", (("Address", str(address)),))
+        self.refreshDevice()
+
+    @staticmethod
+    def _same_file(first: Path, second: Path) -> bool:
+        if first == second:
+            return True
+        try:
+            return first.resolve() == second.resolve()
+        except OSError:
+            return False
+
+    def _reset_build_presentation(self) -> None:
+        """Forget a finished/failed build so labels and progress describe the new target."""
+        self._build_result = None
+        self._built_request = None
+        self._build_state = "idle"
+        self._build_progress = 0.0
+        self._build_message = ""
 
     def _restore_library_identity(self, original_package: str) -> bool:
         library = self._library_controller
@@ -1668,13 +2148,14 @@ class AppController(QObject):
             self._set_notice("Build a renamed copy before installing it.", "warning")
             return
         result = self._build_result
+        built = self._built_request
         bundle = BundleDraft(
             root=result.output_root,
             apk=result.apk,
             obbs=result.obbs,
             manifest=result.manifest,
             game_name=self._bundle.game_name if self._bundle else result.output_root.name,
-            package_name=self._package_id,
+            package_name=built.package_name if built is not None else self._package_id,
             version_code=self._bundle.version_code if self._bundle else "",
         )
         self._start_bundle_install(bundle)
@@ -1683,9 +2164,10 @@ class AppController(QObject):
     def installFinishedFolder(self, url: QUrl) -> None:
         if self._install_state == "running":
             return
-        local = url.toLocalFile() if url.isLocalFile() else url.toString()
-        if not local:
+        local_path = local_path_from_url(url)
+        if local_path is None:
             return
+        local = str(local_path)
         try:
             bundle = self._inspector.inspect_folder(Path(local))
         except (BundleSelectionError, OSError) as exc:
@@ -1694,12 +2176,27 @@ class AppController(QObject):
             return
         self._start_bundle_install(bundle)
 
+    @Slot()
+    def confirmUninstallAndReinstall(self) -> None:
+        """Remove the conflicting Quest app, then install the bundle that was refused."""
+        bundle = self._uninstall_candidate
+        self._uninstall_candidate = None
+        if bundle is None:
+            return
+        self._start_bundle_install(bundle, allow_existing=True, uninstall_first=True)
+
+    @Slot()
+    def cancelUninstallAndReinstall(self) -> None:
+        self._uninstall_candidate = None
+
     def _start_bundle_install(
         self,
         bundle: BundleDraft,
         *,
         retry_only: bool = False,
         allow_existing: bool = False,
+        keep_obb_names: tuple[str, ...] = (),
+        uninstall_first: bool = False,
     ) -> None:
         if self._install_state == "running":
             return
@@ -1724,8 +2221,8 @@ class AppController(QObject):
             return
         if self._device.free_bytes is not None and bundle.total_size > self._device.free_bytes:
             self._set_notice(
-                f"This game needs {_format_bytes(bundle.total_size)}, but the Quest only has "
-                f"{_format_bytes(self._device.free_bytes)} free.",
+                f"This game needs {format_bytes(bundle.total_size)}, but the Quest only has "
+                f"{format_bytes(self._device.free_bytes)} free.",
                 "error",
             )
             return
@@ -1737,7 +2234,7 @@ class AppController(QObject):
         self._install_state = "running"
         self._install_progress = 0.0
         self._last_failure_report = None
-        action = "Retrying" if retry_only else "Installing"
+        action = "Retrying" if retry_only else "Replacing" if uninstall_first else "Installing"
         self._install_message = f"{action} {bundle.game_name or bundle.root.name}"
         self._install_log_step = self._install_message
         if retry_only:
@@ -1759,11 +2256,12 @@ class AppController(QObject):
                 ("Package", bundle.package_name),
                 ("APK", bundle.apk.name),
                 ("OBB files", str(len(bundle.obbs))),
-                ("Total size", _format_bytes(bundle.total_size)),
+                ("Total size", format_bytes(bundle.total_size)),
                 ("Quest", self._device.model or self._device.serial or "Connected Quest"),
             ),
         )
         self.readinessChanged.emit()
+        self._sync_elapsed_timer()
         threading.Thread(
             target=self._install_worker,
             args=(
@@ -1773,6 +2271,8 @@ class AppController(QObject):
                 token,
                 retry_only,
                 allow_existing,
+                keep_obb_names,
+                uninstall_first,
             ),
             daemon=True,
         ).start()
@@ -1785,6 +2285,8 @@ class AppController(QObject):
         token: CancellationToken,
         retry_only: bool,
         allow_existing: bool,
+        keep_obb_names: tuple[str, ...] = (),
+        uninstall_first: bool = False,
     ) -> None:
         assert self._bundle_installer is not None
         try:
@@ -1795,6 +2297,10 @@ class AppController(QObject):
             def log(message: str) -> None:
                 self.workerLogReady.emit(f"Install: {message}")
 
+            if uninstall_first:
+                progress(0.01, f"Uninstalling {bundle.package_name} from the Quest")
+                self._bundle_installer.uninstall_package(bundle.package_name, serial, log=log)
+                token.raise_if_cancelled()
             if retry_only:
                 result = self._bundle_installer.retry_obbs(
                     bundle,
@@ -1802,6 +2308,7 @@ class AppController(QObject):
                     token=token,
                     progress=progress,
                     log=log,
+                    keep_obb_names=keep_obb_names,
                 )
             else:
                 result = self._bundle_installer.install_bundle(
@@ -1822,6 +2329,7 @@ class AppController(QObject):
                 bundle,
                 error=str(exc),
                 failed_obbs=exc.failed_obbs,
+                apk_installed=bool(getattr(exc, "apk_installed", False)),
             )
         except Exception as exc:
             outcome = InstallOutcome(bundle, error=str(exc))
@@ -1830,9 +2338,19 @@ class AppController(QObject):
     @Slot()
     def retryFailedObbs(self) -> None:
         bundle = self._retry_bundle
+        full = self._retry_full_bundle
         if bundle is None:
             return
-        self._start_bundle_install(bundle, retry_only=True)
+        if self._retry_reinstall or full is None:
+            # The APK was never installed: rerun the whole install. Unchanged OBBs are
+            # detected by hash and skipped, so only the failed files are transferred.
+            self._start_bundle_install(full or bundle, allow_existing=True)
+            return
+        self._start_bundle_install(
+            bundle,
+            retry_only=True,
+            keep_obb_names=tuple(obb.name for obb in full.obbs),
+        )
 
     @Slot()
     def continuePackageInstall(self) -> None:
@@ -1858,6 +2376,7 @@ class AppController(QObject):
         self._install_message = "Stopping safely"
         self._set_notice("Stopping the install after the current file…", "warning")
         self.readinessChanged.emit()
+        self.progressChanged.emit()
 
     @Slot(int, float, str)
     def _apply_install_progress(self, generation: int, value: float, message: str) -> None:
@@ -1872,7 +2391,7 @@ class AppController(QObject):
                 message,
                 (("Progress", f"{round(self._install_progress * 100)}%"),),
             )
-        self.readinessChanged.emit()
+        self.progressChanged.emit()
 
     @Slot(int, object)
     def _apply_install_outcome(self, generation: int, raw_outcome: object) -> None:
@@ -1893,6 +2412,7 @@ class AppController(QObject):
             self.packageConflictRequested.emit(raw_outcome.conflict_package)
         elif raw_outcome.cancelled:
             self._retry_bundle = None
+            self._retry_full_bundle = None
             self._install_state = "idle"
             self._install_progress = 0.0
             self._set_notice(
@@ -1904,11 +2424,23 @@ class AppController(QObject):
                 (("After", self._elapsed(self._install_started_at)),),
             )
         elif raw_outcome.error:
-            self._retry_bundle = (
-                replace(raw_outcome.bundle, obbs=raw_outcome.failed_obbs)
-                if raw_outcome.failed_obbs
-                else None
-            )
+            if raw_outcome.failed_obbs:
+                self._retry_full_bundle = raw_outcome.bundle
+                self._retry_reinstall = not raw_outcome.apk_installed
+                self._retry_bundle = (
+                    raw_outcome.bundle
+                    if self._retry_reinstall
+                    else replace(raw_outcome.bundle, obbs=raw_outcome.failed_obbs)
+                )
+            else:
+                self._retry_bundle = None
+                self._retry_full_bundle = None
+            if (
+                "INSTALL_FAILED_UPDATE_INCOMPATIBLE" in raw_outcome.error
+                or "INSTALL_FAILED_VERSION_DOWNGRADE" in raw_outcome.error
+            ):
+                self._uninstall_candidate = raw_outcome.bundle
+                self.uninstallSuggested.emit(raw_outcome.bundle.package_name, raw_outcome.error)
             self._install_state = "failed"
             self._install_progress = 0.0
             self._last_failure_report = self._report_in(raw_outcome.bundle.root)
@@ -1924,6 +2456,7 @@ class AppController(QObject):
             )
         else:
             self._retry_bundle = None
+            self._retry_full_bundle = None
             assert raw_outcome.result is not None
             self._install_state = "complete"
             self._install_progress = 1.0
@@ -1974,7 +2507,9 @@ class AppController(QObject):
                         "Installed game profile could not be saved",
                         (("Reason", str(exc)),),
                     )
-            self._delete_source_after_verified_install(raw_outcome.bundle)
+            if not self._direct_library_update_package:
+                self._delete_source_after_verified_install(raw_outcome.bundle)
+        self._sync_elapsed_timer()
         self.readinessChanged.emit()
 
     @Slot(QUrl)
@@ -1987,9 +2522,10 @@ class AppController(QObject):
     def restoreSigningKey(self, url: QUrl) -> None:
         if self._signing_manager is None or self._signing_busy:
             return
-        local = url.toLocalFile() if url.isLocalFile() else url.toString()
-        if not local:
+        local_path = local_path_from_url(url)
+        if local_path is None:
             return
+        local = str(local_path)
         source = Path(local).expanduser().resolve()
         self._start_signing_operation("restore", source, replace_existing=False)
 
@@ -2016,7 +2552,7 @@ class AppController(QObject):
             return
         self._signing_busy = True
         self._automatic_signing_backup = automatic and action == "backup"
-        self.signingChanged.emit()
+        self._emit_signing_changed()
         self.readinessChanged.emit()
         self._set_notice(
             "Creating a private signing-key backup…"
@@ -2067,7 +2603,7 @@ class AppController(QObject):
         automatic_backup = self._automatic_signing_backup
         self._automatic_signing_backup = False
         self._signing_busy = False
-        self.signingChanged.emit()
+        self._emit_signing_changed()
         self.readinessChanged.emit()
         if raw_outcome.confirmation_required:
             assert raw_outcome.source is not None
@@ -2197,14 +2733,20 @@ class AppController(QObject):
             self._preflight = self._preflight_service.check(request, device=self._device)
         except OSError as exc:
             self._preflight = None
+            self._preflight_failed = True
             self._set_notice(f"The build checks could not finish: {exc}", "error")
             self._record_activity(f"Preflight failed: {exc}")
             self.readinessChanged.emit()
             return
+        self._preflight_failed = False
         tone = (
             "success" if self._preflight.ready and not self._preflight.warnings else "warning"
         )
-        if not preserve_notice:
+        busy_or_done = (
+            self._build_state in {"running", "complete", "failed"}
+            or self._install_state in {"running", "complete", "failed"}
+        )
+        if not preserve_notice and not busy_or_done:
             self._set_notice(self._preflight.summary, tone)
         self.readinessChanged.emit()
 
@@ -2229,6 +2771,7 @@ class AppController(QObject):
             self._build_message = "Stopping after the current safe point"
             self._set_notice("Cancelling safely…", "warning")
             self.readinessChanged.emit()
+            self.progressChanged.emit()
             return
         if self._build_result is not None:
             self._open_local_path(self._build_result.output_root, "finished folder")
@@ -2305,6 +2848,7 @@ class AppController(QObject):
             ),
         )
         self.readinessChanged.emit()
+        self._sync_elapsed_timer()
         threading.Thread(
             target=self._build_worker,
             args=(generation, request, token),
@@ -2393,7 +2937,7 @@ class AppController(QObject):
                 message,
                 (("Progress", f"{round(self._build_progress * 100)}%"),),
             )
-        self.readinessChanged.emit()
+        self.progressChanged.emit()
 
     @Slot(int, object)
     def _apply_build_outcome(self, generation: int, raw_outcome: object) -> None:
@@ -2423,14 +2967,17 @@ class AppController(QObject):
                     ),
                 ),
             )
-            self._partial_output = raw_outcome.partial_output
-            if self._partial_output is not None:
+            if raw_outcome.partial_output is not None or self._partial_output is not None:
+                self._partial_output = raw_outcome.partial_output
                 self.partialOutputChanged.emit()
+            self._sync_elapsed_timer()
             self.readinessChanged.emit()
             return
         completed_request = self._active_build_request
         self._active_build_request = None
+        self._built_request = completed_request
         self._build_result = raw_outcome.result
+        self._sync_elapsed_timer()
         self._last_failure_report = None
         self._build_state = "complete"
         self._build_progress = 1.0
@@ -2501,7 +3048,7 @@ class AppController(QObject):
                     "Game profile could not be saved",
                     (("Reason", str(exc)),),
                 )
-        self.signingChanged.emit()
+        self._emit_signing_changed()
         self.readinessChanged.emit()
         self._handle_post_build_key_backup()
 
@@ -2538,15 +3085,31 @@ class AppController(QObject):
                 "The partial folder was not removed because it was not recognized.", "error"
             )
             return
-        try:
-            shutil.rmtree(partial)
-        except OSError as exc:
-            self._set_notice(f"The partial folder could not be removed: {exc}", "error")
+        self._set_notice("Removing the partial build…")
+
+        def worker() -> None:
+            try:
+                shutil.rmtree(partial)
+                self.partialDiscardReady.emit((partial, ""))
+            except OSError as exc:
+                self.partialDiscardReady.emit((partial, str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @Slot(object)
+    def _apply_partial_discard(self, raw: object) -> None:
+        if not isinstance(raw, tuple) or len(raw) != 2:
+            return
+        partial, error = raw
+        if error:
+            self._set_notice(f"The partial folder could not be removed: {error}", "error")
             return
         clear_build_recovery(self._paths.build_recovery_file, partial)
         self._record_activity(f"Removed partial build: {partial}")
-        self._partial_output = None
-        self.partialOutputChanged.emit()
+        if self._partial_output == partial:
+            self._partial_output = None
+            self.partialOutputChanged.emit()
+        self._set_notice("Partial build removed.", "success")
 
     @Slot()
     def keepPartialBuild(self) -> None:
@@ -2588,9 +3151,8 @@ class AppController(QObject):
         self._analysis_state = "idle"
         self._analysis_progress = 0.0
         self._preflight = None
-        self._build_state = "idle"
-        self._build_progress = 0.0
-        self._build_result = None
+        self._preflight_failed = False
+        self._reset_build_presentation()
         self._output_parent = None
         self._output_override = None
         self._pending_output_conflict = None
@@ -2603,14 +3165,17 @@ class AppController(QObject):
         self._install_progress = 0.0
         self._install_message = ""
         self._retry_bundle = None
+        self._retry_full_bundle = None
         self._pending_conflict_bundle = None
         self._pending_library_profile_id = ""
         self._pending_library_package = ""
         self._matched_library_profile_id = ""
         self._direct_library_update_package = ""
         self._pending_restore = None
+        self._sync_elapsed_timer()
         self.bundleChanged.emit()
         self.packageIdChanged.emit()
+        self.outputChanged.emit()
         self.readinessChanged.emit()
         self._set_notice("Choose a game folder to begin.")
         self._record_activity("Workspace cleared.")

@@ -116,6 +116,7 @@ class RetryBundleInstaller(ImmediateBundleInstaller):
         raise BundleInstallError(
             "Quest reported the wrong size for the OBB.",
             failed_obbs=bundle.obbs,
+            apk_installed=True,
         )
 
     def retry_obbs(

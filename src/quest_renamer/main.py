@@ -208,6 +208,7 @@ def main() -> int:
     preflight = AutomaticPreflight(
         tools_ready=toolchain.build_ready,
         tool_problems=toolchain.problems,
+        cache_root=paths.cache / "build",
     )
     settings_store = JsonSettingsStore(paths.settings_file)
     activity_log = ActivityLog(paths.log_file)
@@ -287,6 +288,7 @@ def main() -> int:
         toolchain,
         signer_registry=package_root / "resources" / "known-signers.json",
         temporary_root=paths.cache / "inspector",
+        framework_root=paths.cache / "build" / "apktool-framework",
     )
     inspector_controller = InspectorController(
         detailed_inspector,

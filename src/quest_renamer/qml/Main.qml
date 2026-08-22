@@ -1,5 +1,7 @@
+import QtCore
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.impl
 import QtQuick.Layouts
 
 ApplicationWindow {
@@ -18,8 +20,28 @@ ApplicationWindow {
     property color panel: "#1f1f1f"
     property color panelRaised: "#242424"
     property color accent: "#4c8abb"
+    readonly property int pageMargin: 30
     property int pageIndex: 0
     property int requestedPage: 0
+
+    // Remember window placement and the last open page between sessions.
+    Settings {
+        id: windowState
+        category: "MainWindow"
+        property alias x: window.x
+        property alias y: window.y
+        property alias width: window.width
+        property alias height: window.height
+        property alias page: window.pageIndex
+    }
+
+    function toneColor(tone, fallback) {
+        if (tone === "error") return "#d4776f"
+        if (tone === "warning") return "#d0b15b"
+        if (tone === "success") return "#70b18f"
+        if (tone === "active") return window.accent
+        return fallback === undefined ? "#7c7c7c" : fallback
+    }
 
     Shortcut { sequence: "Ctrl+1"; onActivated: window.showPage(0) }
     Shortcut { sequence: "Ctrl+2"; onActivated: window.showPage(1) }
@@ -27,16 +49,30 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+4"; onActivated: window.showPage(3) }
     Shortcut { sequence: "Ctrl+5"; onActivated: window.showPage(4) }
     Shortcut { sequence: "Ctrl+L"; onActivated: logWindow.openWindow() }
+    Shortcut { sequences: [StandardKey.Quit, "Ctrl+Q"]; onActivated: Qt.quit() }
     Shortcut {
         sequence: "Ctrl+O"
         onActivated: {
+            if (appController.isBusy)
+                return
             window.showPage(0)
             fileDialogController.chooseFolder(
                 "game",
                 "Choose a Quest game folder",
-                appController.folderPath
+                appController.lastSourceFolder
             )
         }
+    }
+    Shortcut {
+        sequence: "Ctrl+B"
+        onActivated: {
+            if (window.pageIndex === 0 && appController.canBuild)
+                appController.requestBuild()
+        }
+    }
+    Shortcut {
+        sequence: "Ctrl+R"
+        onActivated: appController.refreshDevice()
     }
 
     function showPage(index) {
@@ -239,6 +275,21 @@ ApplicationWindow {
     }
 
     DecisionDialog {
+        id: uninstallDialog
+        property string packageName: ""
+        property string reason: ""
+        heading: "Replace the app on the Quest?"
+        bodyText: reason + "\n\nUninstalling " + packageName + " removes its app data and save "
+                  + "files from the headset. The finished folder is then installed in its place."
+        primaryText: "Uninstall and install"
+        secondaryText: "Keep existing app"
+        destructive: true
+        onPrimaryChosen: appController.confirmUninstallAndReinstall()
+        onSecondaryChosen: appController.cancelUninstallAndReinstall()
+        onDismissed: appController.cancelUninstallAndReinstall()
+    }
+
+    DecisionDialog {
         id: replaceSourceDialog
         heading: "Replace the source after building?"
         bodyText: "The complete renamed bundle is built and verified in a separate folder first. It then takes the original folder path, and the unedited folder is moved to Trash."
@@ -304,6 +355,11 @@ ApplicationWindow {
             packageConflictDialog.packageName = packageName
             packageConflictDialog.open()
         }
+        function onUninstallSuggested(packageName, reason) {
+            uninstallDialog.packageName = packageName
+            uninstallDialog.reason = reason
+            uninstallDialog.open()
+        }
         function onReplaceSourceConfirmationRequested() {
             replaceSourceDialog.open()
         }
@@ -350,12 +406,14 @@ ApplicationWindow {
             spacing: 10
 
             Rectangle {
-                implicitWidth: deviceContent.implicitWidth + 24
+                id: deviceChip
+                implicitWidth: deviceContent.implicitWidth + 22
                 implicitHeight: 32
-                radius: 3
-                color: "#242424"
+                radius: 4
+                color: deviceMouse.containsMouse || deviceMenu.visible ? "#2b2b2b" : "#242424"
                 border.width: 1
-                border.color: appController.deviceTone === "error" ? "#714743"
+                border.color: deviceMenu.visible ? "#5a5a5a"
+                            : appController.deviceTone === "error" ? "#714743"
                             : appController.deviceTone === "warning" ? "#6c5d36"
                             : appController.deviceTone === "success" ? "#3d6654"
                             : "#414141"
@@ -368,16 +426,26 @@ ApplicationWindow {
                         height: 8
                         radius: 4
                         anchors.verticalCenter: parent.verticalCenter
-                        color: appController.deviceTone === "error" ? "#d4776f"
-                             : appController.deviceTone === "warning" ? "#d0b15b"
-                             : appController.deviceTone === "success" ? "#70b18f"
-                             : "#7d7d7d"
+                        color: window.toneColor(appController.deviceTone, "#7d7d7d")
                     }
                     Text {
                         text: appController.deviceLabel
                         color: "#d0d0d0"
                         font.pixelSize: 12
                         font.weight: Font.Medium
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    IconImage {
+                        width: 12
+                        height: 12
+                        sourceSize.width: 12
+                        sourceSize.height: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.verticalCenterOffset: 1
+                        source: Qt.resolvedUrl("../assets/icon-chevron-down.svg")
+                        color: deviceMouse.containsMouse || deviceMenu.visible ? "#cfcfcf" : "#8a8a8a"
+                        rotation: deviceMenu.visible ? 180 : 0
+                        Behavior on rotation { NumberAnimation { duration: 120 } }
                     }
                 }
                 MouseArea {
@@ -385,12 +453,343 @@ ApplicationWindow {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: appController.refreshDevice()
+                    onClicked: deviceMenu.visible ? deviceMenu.close() : deviceMenu.open()
                 }
+                Accessible.role: Accessible.Button
+                Accessible.name: "Quest status: " + appController.deviceLabel + ". Open device panel."
                 ToolTip {
-                    visible: deviceMouse.containsMouse
-                    delay: 450
-                    text: appController.deviceDetail + "\nClick to refresh."
+                    visible: deviceMouse.containsMouse && !deviceMenu.visible
+                    delay: 600
+                    text: "Attached and saved wireless Quests"
+                }
+
+                Popup {
+                    id: deviceMenu
+                    objectName: "deviceMenu"
+                    parent: deviceChip
+                    x: 0
+                    y: deviceChip.height + 6
+                    width: 372
+                    padding: 0
+                    modal: false
+                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                    enter: Transition {
+                        ParallelAnimation {
+                            NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 }
+                            NumberAnimation { property: "y"; from: deviceChip.height; to: deviceChip.height + 6; duration: 120; easing.type: Easing.OutCubic }
+                        }
+                    }
+                    exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
+                    background: Rectangle {
+                        color: "#232323"
+                        border.width: 1
+                        border.color: "#474747"
+                        radius: 6
+                    }
+
+                    contentItem: ColumnLayout {
+                        spacing: 0
+
+                        // Status block
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Layout.margins: 14
+                            Layout.bottomMargin: 12
+                            spacing: 12
+                            Rectangle {
+                                Layout.preferredWidth: 34
+                                Layout.preferredHeight: 34
+                                radius: 17
+                                color: appController.deviceTone === "success" ? "#25382f"
+                                     : appController.deviceTone === "warning" ? "#3a3320"
+                                     : appController.deviceTone === "error" ? "#3c2624"
+                                     : "#2e2e2e"
+                                IconImage {
+                                    anchors.centerIn: parent
+                                    width: 16
+                                    height: 16
+                                    sourceSize.width: 16
+                                    sourceSize.height: 16
+                                    source: Qt.resolvedUrl(appController.isWirelessDevice
+                                                           ? "../assets/icon-wifi.svg"
+                                                           : "../assets/icon-usb.svg")
+                                    color: window.toneColor(appController.deviceTone, "#8a8a8a")
+                                }
+                            }
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 2
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: appController.deviceLabel
+                                    color: "#f0f0f0"
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: appController.deviceDetail
+                                    color: window.textSecondary
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 2
+                                    elide: Text.ElideRight
+                                }
+                            }
+                        }
+
+                        // Attached devices (only when the user has to choose)
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#383838"; visible: attachedColumn.visible }
+                        ColumnLayout {
+                            id: attachedColumn
+                            visible: appController.deviceChoices.length > 1
+                            Layout.fillWidth: true
+                            Layout.margins: 8
+                            spacing: 2
+                            SectionLabel {
+                                text: "ATTACHED DEVICES"
+                                Layout.leftMargin: 6
+                                Layout.topMargin: 4
+                                Layout.bottomMargin: 4
+                            }
+                            Repeater {
+                                model: appController.deviceChoices
+                                delegate: Rectangle {
+                                    id: attachedRow
+                                    required property var modelData
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 40
+                                    radius: 4
+                                    color: attachedHover.hovered ? "#2d2d2d" : "transparent"
+                                    HoverHandler { id: attachedHover }
+                                    TapHandler { onTapped: { appController.selectDevice(attachedRow.modelData.serial); deviceMenu.close() } }
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        anchors.rightMargin: 6
+                                        spacing: 10
+                                        IconImage {
+                                            width: 15; height: 15
+                                            sourceSize.width: 15; sourceSize.height: 15
+                                            source: Qt.resolvedUrl(attachedRow.modelData.serial.indexOf(":") >= 0
+                                                                   ? "../assets/icon-wifi.svg" : "../assets/icon-usb.svg")
+                                            color: "#a9a9a9"
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: attachedRow.modelData.label
+                                            color: "#e6e6e6"
+                                            font.pixelSize: 12
+                                            elide: Text.ElideMiddle
+                                        }
+                                        AppButton {
+                                            text: "Use"
+                                            quiet: true
+                                            implicitHeight: 26
+                                            leftPadding: 10; rightPadding: 10
+                                            font.pixelSize: 11
+                                            onClicked: { appController.selectDevice(attachedRow.modelData.serial); deviceMenu.close() }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Saved wireless Quests
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#383838" }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.margins: 8
+                            spacing: 2
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 6
+                                Layout.rightMargin: 6
+                                Layout.topMargin: 4
+                                Layout.bottomMargin: 4
+                                SectionLabel { text: "SAVED WIRELESS QUESTS" }
+                                Item { Layout.fillWidth: true }
+                                Text {
+                                    visible: appController.wirelessBusy
+                                    text: "Working…"
+                                    color: "#9a9a9a"
+                                    font.pixelSize: 10
+                                }
+                            }
+                            Text {
+                                visible: appController.savedWirelessDevices.length === 0
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 6
+                                Layout.rightMargin: 6
+                                Layout.bottomMargin: 6
+                                text: "Nothing saved yet. Enable wireless ADB over USB once, or add an address, and the headset is remembered here."
+                                color: "#8f8f8f"
+                                font.pixelSize: 11
+                                wrapMode: Text.WordWrap
+                            }
+                            Repeater {
+                                model: appController.savedWirelessDevices
+                                delegate: Rectangle {
+                                    id: savedRowItem
+                                    required property var modelData
+                                    readonly property bool isCurrent: appController.isWirelessDevice
+                                                                       && appController.deviceTone === "success"
+                                                                       && appController.deviceLabel.length > 0
+                                                                       && appController.currentSerial === modelData.address
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 46
+                                    radius: 4
+                                    color: savedHover.hovered && !isCurrent ? "#2d2d2d" : "transparent"
+                                    HoverHandler { id: savedHover }
+                                    TapHandler {
+                                        enabled: !savedRowItem.isCurrent && !appController.wirelessBusy
+                                        onTapped: appController.connectWireless(savedRowItem.modelData.address)
+                                    }
+                                    RowLayout {
+                                        anchors.fill: parent
+                                        anchors.leftMargin: 8
+                                        anchors.rightMargin: 6
+                                        spacing: 10
+                                        IconImage {
+                                            width: 15; height: 15
+                                            sourceSize.width: 15; sourceSize.height: 15
+                                            source: Qt.resolvedUrl("../assets/icon-wifi.svg")
+                                            color: savedRowItem.isCurrent ? "#70b18f" : "#a9a9a9"
+                                        }
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 1
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: savedRowItem.modelData.label || "Quest"
+                                                color: "#e6e6e6"
+                                                font.pixelSize: 12
+                                                font.weight: Font.Medium
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: savedRowItem.modelData.address
+                                                color: "#8d8d8d"
+                                                font.pixelSize: 10
+                                                elide: Text.ElideMiddle
+                                            }
+                                        }
+                                        Text {
+                                            visible: savedRowItem.isCurrent
+                                            text: "Connected"
+                                            color: "#70b18f"
+                                            font.pixelSize: 11
+                                            font.weight: Font.Medium
+                                            rightPadding: 6
+                                        }
+                                        AppButton {
+                                            visible: !savedRowItem.isCurrent
+                                            text: "Connect"
+                                            quiet: true
+                                            implicitHeight: 26
+                                            leftPadding: 10; rightPadding: 10
+                                            font.pixelSize: 11
+                                            enabled: !appController.wirelessBusy
+                                            onClicked: appController.connectWireless(savedRowItem.modelData.address)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Actions
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#383838" }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.margins: 12
+                            spacing: 8
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+                                AppButton {
+                                    Layout.fillWidth: true
+                                    visible: !appController.isWirelessDevice
+                                    text: "Enable over USB"
+                                    implicitHeight: 30
+                                    font.pixelSize: 11
+                                    enabled: appController.deviceTone === "success" && !appController.wirelessBusy
+                                    tip: "Switch the USB-connected headset to wireless ADB and remember it"
+                                    onClicked: appController.enableWirelessOverUsb()
+                                }
+                                AppButton {
+                                    Layout.fillWidth: true
+                                    visible: appController.isWirelessDevice
+                                    text: "Disconnect"
+                                    implicitHeight: 30
+                                    font.pixelSize: 11
+                                    enabled: !appController.wirelessBusy
+                                    onClicked: appController.disconnectWireless()
+                                }
+                                AppButton {
+                                    Layout.fillWidth: true
+                                    text: "Add address…"
+                                    implicitHeight: 30
+                                    font.pixelSize: 11
+                                    onClicked: {
+                                        deviceMenu.close()
+                                        window.showPage(4)
+                                        wirelessField.forceActiveFocus()
+                                    }
+                                }
+                            }
+                            Text {
+                                visible: appController.wirelessStatus.length > 0
+                                Layout.fillWidth: true
+                                text: appController.wirelessStatus
+                                color: appController.wirelessTone === "error" ? "#d98a82"
+                                     : appController.wirelessTone === "success" ? "#78b894"
+                                     : appController.wirelessTone === "warning" ? "#d0ad68"
+                                     : window.textSecondary
+                                font.pixelSize: 10
+                                wrapMode: Text.WordWrap
+                                maximumLineCount: 3
+                                elide: Text.ElideRight
+                            }
+                        }
+                    }
+                }
+            }
+            // Small refresh control beside the chip; the chip itself opens the device menu.
+            AbstractButton {
+                id: refreshButton
+                implicitWidth: 28
+                implicitHeight: 28
+                hoverEnabled: true
+                focusPolicy: Qt.TabFocus
+                Accessible.name: "Refresh Quest status"
+                ToolTip.visible: hovered
+                ToolTip.delay: 450
+                ToolTip.text: "Refresh Quest status (Ctrl+R)"
+                onClicked: appController.refreshDevice()
+                background: Rectangle {
+                    radius: 3
+                    color: refreshButton.down ? "#2e2e2e" : refreshButton.hovered ? "#292929" : "transparent"
+                }
+                contentItem: Item {
+                    IconImage {
+                        anchors.centerIn: parent
+                        width: 14
+                        height: 14
+                        sourceSize.width: 14
+                        sourceSize.height: 14
+                        source: Qt.resolvedUrl("../assets/icon-refresh.svg")
+                        color: refreshButton.hovered ? "#d7d7d7" : "#8f8f8f"
+                        RotationAnimation on rotation {
+                            running: appController.deviceTone === "neutral"
+                                     && appController.deviceLabel.indexOf("Checking") === 0
+                            loops: Animation.Infinite
+                            from: 0
+                            to: 360
+                            duration: 1100
+                        }
+                    }
                 }
             }
             Item { Layout.fillWidth: true }
@@ -544,21 +943,17 @@ ApplicationWindow {
 
                 // Dashboard
                 Item {
-                    ScrollView {
+                    PageScroller {
+                        id: dashboardScroll
                         anchors.fill: parent
-                        contentWidth: availableWidth
-                        clip: true
+                        page: dashboardColumn
 
                         ColumnLayout {
-                            width: parent.width
+                            id: dashboardColumn
+                            x: window.pageMargin
+                            y: dashboardScroll.topInset
+                            width: dashboardScroll.width - 2 * window.pageMargin
                             spacing: 16
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.leftMargin: 30
-                            anchors.rightMargin: 30
-                            anchors.topMargin: 16
-                            anchors.bottomMargin: 28
 
                             RowLayout {
                                 Layout.fillWidth: true
@@ -567,33 +962,42 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                 }
                                 AppButton {
+                                    visible: appController.hasBundle && !appController.isBusy
+                                    text: "Clear"
+                                    quiet: true
+                                    tip: "Forget the selected source and start over"
+                                    onClicked: appController.startOver()
+                                }
+                                AppButton {
                                     text: "Install built game"
                                     enabled: appController.canInstallBuilt
+                                    tip: "Install the APK and OBB files produced by the last build"
                                     onClicked: appController.installBuiltFolder()
                                 }
                                 AppButton {
                                     text: appController.installActionLabel
                                     enabled: appController.canInstallFolder
+                                    tip: "Choose a previously built game folder and install it"
                                     onClicked: fileDialogController.chooseFolder(
                                         "install",
                                         "Choose a finished game folder",
-                                        appController.outputFolder
+                                        appController.outputFolder || appController.lastOutputParent
                                     )
                                 }
                             }
 
-                            Rectangle {
+                            Panel {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 126
-                                radius: 3
+                                Layout.preferredHeight: sourceColumn.implicitHeight + 32
                                 color: sourceDrop.containsDrag ? "#272727" : window.panel
-                                border.width: 1
                                 border.color: sourceDrop.containsDrag ? window.accent : window.line
+                                opacity: appController.isBusy ? 0.75 : 1
                                 Behavior on color { ColorAnimation { duration: 100 } }
 
                                 DropArea {
                                     id: sourceDrop
                                     anchors.fill: parent
+                                    enabled: !appController.isBusy
                                     onDropped: function(drop) {
                                         if (drop.urls.length > 0)
                                             appController.chooseFolder(drop.urls[0])
@@ -601,16 +1005,13 @@ ApplicationWindow {
                                 }
 
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: sourceColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: 16
                                     spacing: 7
-                                    Text {
-                                        text: "SOURCE"
-                                        color: "#777777"
-                                        font.pixelSize: 9
-                                        font.weight: Font.DemiBold
-                                        font.letterSpacing: 1
-                                    }
+                                    SectionLabel { text: "SOURCE" }
                                     RowLayout {
                                         Layout.fillWidth: true
                                         spacing: 8
@@ -626,7 +1027,6 @@ ApplicationWindow {
                                             selectByMouse: true
                                             leftPadding: 11
                                             rightPadding: 11
-                                            onAccepted: appController.chooseFolderPath(text)
                                             onEditingFinished: {
                                                 if (text && text !== appController.folderPath)
                                                     appController.chooseFolderPath(text)
@@ -639,13 +1039,21 @@ ApplicationWindow {
                                             }
                                         }
                                         AppButton {
+                                            visible: appController.hasBundle
+                                            text: "Open"
+                                            quiet: true
+                                            tip: "Open the source folder in your file manager"
+                                            onClicked: appController.openSourceFolder()
+                                        }
+                                        AppButton {
                                             text: "Browse…"
                                             primary: !appController.hasBundle
                                             enabled: !appController.isBusy
+                                            tip: "Choose a game folder (Ctrl+O)"
                                             onClicked: fileDialogController.chooseFolder(
                                                 "game",
                                                 "Choose a Quest game folder",
-                                                appController.folderPath
+                                                appController.folderPath || appController.lastSourceFolder
                                             )
                                         }
                                     }
@@ -700,34 +1108,49 @@ ApplicationWindow {
                             }
 
                             RowLayout {
+                                id: identityRow
                                 Layout.fillWidth: true
                                 spacing: 14
+                                // Both panels share the taller of the two content heights.
+                                readonly property int panelHeight: Math.max(
+                                    identityColumn.implicitHeight + 36,
+                                    outputColumn.implicitHeight + 28,
+                                    250
+                                )
 
-                                Rectangle {
+                                Panel {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 264
-                                    radius: 3
-                                    color: window.panel
-                                    border.width: 1
-                                    border.color: window.line
+                                    Layout.preferredHeight: identityRow.panelHeight
 
                                     ColumnLayout {
-                                        anchors.fill: parent
+                                        id: identityColumn
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
                                         anchors.margins: 18
                                         spacing: 8
-                                        Text {
-                                            text: "APP IDENTITY"
-                                            color: "#777777"
-                                            font.pixelSize: 9
-                                            font.weight: Font.DemiBold
-                                            font.letterSpacing: 1
-                                        }
-                                        Text {
+                                        SectionLabel { text: "APP IDENTITY" }
+                                        RowLayout {
                                             Layout.fillWidth: true
-                                            text: appController.hasBundle ? appController.sourcePackage : "Current package appears here"
-                                            color: appController.hasBundle ? "#b5b5b5" : "#696969"
-                                            font.pixelSize: 11
-                                            elide: Text.ElideMiddle
+                                            spacing: 6
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: appController.hasBundle ? appController.sourcePackage : "Current package appears here"
+                                                color: appController.hasBundle ? "#b5b5b5" : "#696969"
+                                                font.pixelSize: 11
+                                                elide: Text.ElideMiddle
+                                            }
+                                            AppButton {
+                                                visible: appController.hasBundle
+                                                text: "Copy"
+                                                quiet: true
+                                                implicitHeight: 22
+                                                leftPadding: 8
+                                                rightPadding: 8
+                                                font.pixelSize: 10
+                                                tip: "Copy the original package ID"
+                                                onClicked: appController.copyText(appController.sourcePackage)
+                                            }
                                         }
                                         TextField {
                                             id: packageField
@@ -744,7 +1167,19 @@ ApplicationWindow {
                                             selectByMouse: true
                                             leftPadding: 12
                                             rightPadding: 12
-                                            onTextEdited: appController.setPackageId(text)
+                                            // Debounce validation so preflight does not run per keystroke.
+                                            onTextEdited: packageDebounce.restart()
+                                            onEditingFinished: {
+                                                packageDebounce.stop()
+                                                if (text !== appController.packageId)
+                                                    appController.setPackageId(text)
+                                            }
+                                            Timer {
+                                                id: packageDebounce
+                                                interval: 180
+                                                repeat: false
+                                                onTriggered: appController.setPackageId(packageField.text)
+                                            }
                                             background: Rectangle {
                                                 radius: 6
                                                 color: "#181818"
@@ -756,10 +1191,13 @@ ApplicationWindow {
                                         }
                                         RowLayout {
                                             spacing: 6
-                                            AppButton { text: ".mr"; enabled: appController.hasBundle && !appController.isBuilding; onClicked: appController.applyTag("mr") }
-                                            AppButton { text: ".dev"; enabled: appController.hasBundle && !appController.isBuilding; onClicked: appController.applyTag("dev") }
-                                            AppButton { text: ".test"; enabled: appController.hasBundle && !appController.isBuilding; onClicked: appController.applyTag("test") }
-                                            AppButton { text: ".qa"; enabled: appController.hasBundle && !appController.isBuilding; onClicked: appController.applyTag("qa") }
+                                            readonly property bool tagsEnabled: appController.hasBundle
+                                                                                && !appController.isBuilding
+                                                                                && !appController.isDirectLibraryUpdate
+                                            AppButton { text: ".mr"; enabled: parent.tagsEnabled; tip: "Append .mr to the original package ID"; onClicked: appController.applyTag("mr") }
+                                            AppButton { text: ".dev"; enabled: parent.tagsEnabled; tip: "Append .dev to the original package ID"; onClicked: appController.applyTag("dev") }
+                                            AppButton { text: ".test"; enabled: parent.tagsEnabled; tip: "Append .test to the original package ID"; onClicked: appController.applyTag("test") }
+                                            AppButton { text: ".qa"; enabled: parent.tagsEnabled; tip: "Append .qa to the original package ID"; onClicked: appController.applyTag("qa") }
                                             Item { Layout.fillWidth: true }
                                         }
                                         Text {
@@ -776,20 +1214,14 @@ ApplicationWindow {
                                             Layout.preferredHeight: 1
                                             color: "#353535"
                                         }
-                                        Text {
-                                            text: "SIGNING LINEAGE"
-                                            color: "#777777"
-                                            font.pixelSize: 9
-                                            font.weight: Font.DemiBold
-                                            font.letterSpacing: 1
-                                        }
+                                        SectionLabel { text: "SIGNING LINEAGE" }
                                         Text {
                                             Layout.fillWidth: true
                                             text: appController.signerLineage
                                             color: appController.hasBundle ? "#a9a9a9" : "#696969"
                                             font.pixelSize: 10
                                             elide: Text.ElideMiddle
-                                            ToolTip.visible: lineageMouse.containsMouse
+                                            ToolTip.visible: lineageMouse.containsMouse && truncated
                                             ToolTip.text: text
                                             MouseArea {
                                                 id: lineageMouse
@@ -798,29 +1230,23 @@ ApplicationWindow {
                                                 acceptedButtons: Qt.NoButton
                                             }
                                         }
-                                        Item { Layout.fillHeight: true }
                                     }
                                 }
 
-                                Rectangle {
+                                Panel {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 264
-                                    radius: 3
-                                    color: window.panel
-                                    border.width: 1
-                                    border.color: window.line
+                                    Layout.preferredHeight: identityRow.panelHeight
 
                                     ColumnLayout {
-                                        anchors.fill: parent
+                                        id: outputColumn
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.top: parent.top
                                         anchors.margins: 14
                                         spacing: 5
-                                        Text {
+                                        SectionLabel {
                                             text: appController.isDirectLibraryUpdate
                                                   ? "QUEST UPDATE" : "OUTPUT"
-                                            color: "#777777"
-                                            font.pixelSize: 9
-                                            font.weight: Font.DemiBold
-                                            font.letterSpacing: 1
                                         }
                                         Text {
                                             text: appController.isDirectLibraryUpdate
@@ -832,55 +1258,81 @@ ApplicationWindow {
                                             font.pixelSize: 13
                                             font.weight: Font.Medium
                                         }
-                                        Rectangle {
+                                        RowLayout {
                                             Layout.fillWidth: true
-                                            Layout.preferredHeight: 30
-                                            radius: 3
-                                            color: outputMouse.containsMouse ? "#282828" : "#232323"
-                                            border.width: 1
-                                            border.color: outputMouse.containsMouse ? "#505050" : "#383838"
-                                            Text {
-                                                anchors.left: parent.left
-                                                anchors.right: outputChange.left
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                anchors.leftMargin: 10
-                                                anchors.rightMargin: 8
-                                                text: appController.isDirectLibraryUpdate
-                                                      ? appController.deviceTitle + "  •  " + appController.packageId
-                                                      : appController.hasBundle
-                                                      ? appController.outputFolder
-                                                      : "Select a game to choose its save location"
-                                                color: appController.hasBundle ? window.textSecondary : "#666666"
-                                                font.pixelSize: 10
-                                                elide: Text.ElideMiddle
+                                            spacing: 6
+                                            Rectangle {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 30
+                                                radius: 3
+                                                color: outputMouse.containsMouse ? "#282828" : "#232323"
+                                                border.width: 1
+                                                border.color: outputMouse.containsMouse ? "#505050" : "#383838"
+                                                Text {
+                                                    anchors.left: parent.left
+                                                    anchors.right: outputChange.left
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    anchors.leftMargin: 10
+                                                    anchors.rightMargin: 8
+                                                    text: appController.isDirectLibraryUpdate
+                                                          ? appController.deviceTitle + "  •  " + appController.packageId
+                                                          : appController.hasBundle
+                                                          ? appController.outputFolder
+                                                          : "Select a game to choose its save location"
+                                                    color: appController.hasBundle ? window.textSecondary : "#666666"
+                                                    font.pixelSize: 10
+                                                    elide: Text.ElideMiddle
+                                                }
+                                                Text {
+                                                    id: outputChange
+                                                    visible: !appController.isDirectLibraryUpdate
+                                                    anchors.right: parent.right
+                                                    anchors.verticalCenter: parent.verticalCenter
+                                                    anchors.rightMargin: 10
+                                                    text: appController.settings.replaceSourceAfterBuild
+                                                          ? "Source"
+                                                          : "Change…"
+                                                    color: appController.hasBundle ? "#b9b9b9" : "#666666"
+                                                    font.pixelSize: 10
+                                                    font.weight: Font.Medium
+                                                }
+                                                MouseArea {
+                                                    id: outputMouse
+                                                    anchors.fill: parent
+                                                    enabled: appController.hasBundle
+                                                             && !appController.isBusy
+                                                             && !appController.isDirectLibraryUpdate
+                                                             && !appController.settings.replaceSourceAfterBuild
+                                                    hoverEnabled: true
+                                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                                    onClicked: fileDialogController.chooseFolder(
+                                                        "output",
+                                                        "Choose where to save the renamed folder",
+                                                        appController.outputFolder || appController.lastOutputParent
+                                                    )
+                                                }
                                             }
-                                            Text {
-                                                id: outputChange
-                                                visible: !appController.isDirectLibraryUpdate
-                                                anchors.right: parent.right
-                                                anchors.verticalCenter: parent.verticalCenter
-                                                anchors.rightMargin: 10
-                                                text: appController.settings.replaceSourceAfterBuild
-                                                      ? "Source"
-                                                      : "Change…"
-                                                color: appController.hasBundle ? "#b9b9b9" : "#666666"
-                                                font.pixelSize: 10
-                                                font.weight: Font.Medium
+                                            AppButton {
+                                                visible: appController.hasBundle && !appController.isDirectLibraryUpdate
+                                                text: "Open"
+                                                quiet: true
+                                                implicitHeight: 30
+                                                leftPadding: 9
+                                                rightPadding: 9
+                                                font.pixelSize: 11
+                                                tip: "Open the save location (its parent folder until the build exists)"
+                                                onClicked: appController.openOutputFolder()
                                             }
-                                            MouseArea {
-                                                id: outputMouse
-                                                anchors.fill: parent
-                                                enabled: appController.hasBundle
-                                                         && !appController.isBusy
-                                                         && !appController.isDirectLibraryUpdate
-                                                         && !appController.settings.replaceSourceAfterBuild
-                                                hoverEnabled: true
-                                                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                                onClicked: fileDialogController.chooseFolder(
-                                                    "output",
-                                                    "Choose where to save the renamed folder",
-                                                    appController.outputFolder
-                                                )
+                                            AppButton {
+                                                visible: appController.hasBundle && !appController.isDirectLibraryUpdate
+                                                text: "Copy"
+                                                quiet: true
+                                                implicitHeight: 30
+                                                leftPadding: 9
+                                                rightPadding: 9
+                                                font.pixelSize: 11
+                                                tip: "Copy the save location path"
+                                                onClicked: appController.copyText(appController.outputFolder)
                                             }
                                         }
                                         Rectangle {
@@ -894,7 +1346,7 @@ ApplicationWindow {
                                             visible: !appController.isDirectLibraryUpdate
                                             Layout.fillWidth: true
                                             compact: true
-                                            enabled: true
+                                            enabled: !appController.isBusy
                                             title: "Older firmware patch"
                                             detail: appController.olderFirmwareDetail
                                             checked: appController.settings.olderFirmwarePatch
@@ -1013,6 +1465,7 @@ ApplicationWindow {
                                     Text {
                                         visible: operationPanel.operationActive
                                         text: Math.round(operationPanel.operationProgress * 100) + "%"
+                                              + (appController.operationElapsed ? "  •  " + appController.operationElapsed : "")
                                         color: "#d8d8d8"
                                         font.pixelSize: 11
                                         font.weight: Font.DemiBold
@@ -1033,6 +1486,16 @@ ApplicationWindow {
                                         onClicked: logWindow.openWindow()
                                     }
                                     AppButton {
+                                        visible: appController.noticeTone === "error"
+                                                 && !appController.isBusy
+                                                 && appController.hasBundle
+                                                 && !appController.isAnalyzing
+                                        text: "Copy error"
+                                        quiet: true
+                                        tip: "Copy the message above to the clipboard"
+                                        onClicked: appController.copyText(appController.notice)
+                                    }
+                                    AppButton {
                                         text: appController.isInstalling ? "Cancel install"
                                               : appController.canRetryObbs ? "Retry failed OBB transfer"
                                               : appController.buildActionLabel
@@ -1040,7 +1503,11 @@ ApplicationWindow {
                                         enabled: appController.isInstalling || appController.canRetryObbs
                                                  || appController.isBuilding
                                                  || appController.canBuild
-                                                 || appController.buildActionLabel === "Open finished folder"
+                                                 || appController.hasBuildResult
+                                        tip: appController.isInstalling ? "Stop after the current APK or OBB finishes"
+                                             : appController.isBuilding ? "Stop the build at the next safe point"
+                                             : appController.hasBuildResult ? "Open the finished folder"
+                                             : "Build the renamed copy (Ctrl+B)"
                                         onClicked: {
                                             if (appController.isInstalling)
                                                 appController.cancelInstall()
@@ -1051,7 +1518,7 @@ ApplicationWindow {
                                         }
                                     }
                                 }
-                                Rectangle {
+                                ThinProgress {
                                     visible: operationPanel.operationActive
                                     anchors.left: parent.left
                                     anchors.right: parent.right
@@ -1059,18 +1526,9 @@ ApplicationWindow {
                                     anchors.leftMargin: 15
                                     anchors.rightMargin: 15
                                     anchors.bottomMargin: 8
-                                    height: 8
-                                    radius: 4
-                                    color: "#303030"
-                                    Rectangle {
-                                        width: parent.width * Math.max(
-                                                   0, Math.min(1, operationPanel.operationProgress)
-                                               )
-                                        height: parent.height
-                                        radius: 4
-                                        color: window.accent
-                                        Behavior on width { NumberAnimation { duration: 120 } }
-                                    }
+                                    thickness: 8
+                                    value: operationPanel.operationProgress
+                                    fillColor: window.accent
                                 }
                             }
                         }
@@ -1081,8 +1539,8 @@ ApplicationWindow {
                 Item {
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 30
-                        anchors.rightMargin: 30
+                        anchors.leftMargin: window.pageMargin
+                        anchors.rightMargin: window.pageMargin
                         anchors.topMargin: 16
                         anchors.bottomMargin: 24
                         spacing: 12
@@ -1168,11 +1626,14 @@ ApplicationWindow {
                                        ? window.textPrimary : window.textSecondary
                                 font.pixelSize: 10
                             }
-                            Switch {
+                            AppSwitch {
                                 checked: libraryController.showInstalled
                                 enabled: !appController.isBusy
                                          && !libraryController.archiveBusy
                                 Accessible.name: "Show apps installed on headset"
+                                ToolTip.visible: hovered
+                                ToolTip.delay: 500
+                                ToolTip.text: "Switch between the connected headset's apps and the saved signing-key vault"
                                 onToggled: libraryController.setShowInstalled(checked)
                             }
                             Item {
@@ -1275,7 +1736,11 @@ ApplicationWindow {
                                 reuseItems: true
                                 cacheBuffer: 188
                                 boundsBehavior: Flickable.StopAtBounds
-                                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AlwaysOff }
+                                ScrollBar.vertical: AppScrollBar {}
+                                keyNavigationEnabled: true
+                                focus: true
+                                Keys.onUpPressed: libraryController.selectOffset(-1)
+                                Keys.onDownPressed: libraryController.selectOffset(1)
                                 delegate: Rectangle {
                                             required property var modelData
                                             width: libraryList.width
@@ -1313,6 +1778,8 @@ ApplicationWindow {
                                                         fillMode: Image.PreserveAspectFit
                                                         asynchronous: true
                                                         cache: true
+                                                        // Decode launcher icons at display size, not 512 px.
+                                                        sourceSize: Qt.size(80, 80)
                                                     }
                                                     Text {
                                                         visible: !modelData.iconUrl
@@ -1597,8 +2064,8 @@ ApplicationWindow {
                 Item {
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 26
-                        anchors.rightMargin: 26
+                        anchors.leftMargin: window.pageMargin
+                        anchors.rightMargin: window.pageMargin
                         anchors.topMargin: 16
                         anchors.bottomMargin: 26
                         spacing: 12
@@ -1610,45 +2077,47 @@ ApplicationWindow {
                                 text: "Add APKs…"
                                 primary: true
                                 enabled: !bulkController.isBusy && !appController.isBusy
+                                tip: "Add one or more APK files; each becomes a queue entry"
                                 onClicked: fileDialogController.chooseApks(
                                     "bulkApks",
                                     "Add one or more Quest APKs",
-                                    appController.folderPath
+                                    appController.folderPath || appController.lastSourceFolder
                                 )
                             }
                             AppButton {
                                 text: "Add folder…"
                                 enabled: !bulkController.isBusy && !appController.isBusy
+                                tip: "Add one game folder containing an APK and its OBB files"
                                 onClicked: fileDialogController.chooseFolder(
                                     "bulkFolder",
                                     "Add a game folder",
-                                    appController.folderPath
+                                    appController.folderPath || appController.lastSourceFolder
                                 )
                             }
                             AppButton {
                                 text: "Scan parent…"
                                 enabled: !bulkController.isBusy && !appController.isBusy
+                                tip: "Add every game folder found directly inside a parent folder"
                                 onClicked: fileDialogController.chooseFolder(
                                     "bulkScan",
                                     "Scan a parent containing game folders",
-                                    appController.folderPath
+                                    appController.folderPath || appController.lastSourceFolder
                                 )
                             }
                         }
 
-                        Rectangle {
+                        Panel {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumHeight: 220
-                            radius: 3
                             color: bulkDrop.containsDrag ? "#252525" : window.panel
-                            border.width: 1
                             border.color: bulkDrop.containsDrag ? window.accent : window.line
                             Behavior on color { ColorAnimation { duration: 100 } }
 
                             DropArea {
                                 id: bulkDrop
                                 anchors.fill: parent
+                                enabled: !bulkController.isBusy && !appController.isBusy
                                 onDropped: drop => {
                                     if (drop.hasUrls)
                                         bulkController.addDropped(drop.urls)
@@ -1663,8 +2132,12 @@ ApplicationWindow {
                                 spacing: 1
                                 model: bulkController.items
                                 visible: bulkController.count > 0
+                                reuseItems: true
+                                boundsBehavior: Flickable.StopAtBounds
+                                ScrollBar.vertical: AppScrollBar {}
 
                                 delegate: Rectangle {
+                                    id: bulkRow
                                     required property int index
                                     required property string folderName
                                     required property string folderPath
@@ -1676,6 +2149,8 @@ ApplicationWindow {
                                     required property string itemDetail
                                     required property string itemTone
                                     required property real itemProgress
+                                    required property bool itemBuilt
+                                    required property bool itemInstalled
                                     width: bulkList.width
                                     height: 92
                                     color: index % 2 ? "#202020" : "#222222"
@@ -1689,11 +2164,7 @@ ApplicationWindow {
                                             Layout.preferredWidth: 8
                                             Layout.preferredHeight: 8
                                             radius: 4
-                                            color: itemTone === "success" ? "#70b18f"
-                                                 : itemTone === "error" ? "#d4776f"
-                                                 : itemTone === "warning" ? "#d0b15b"
-                                                 : itemTone === "active" ? window.accent
-                                                 : "#737373"
+                                            color: window.toneColor(bulkRow.itemTone, "#737373")
                                         }
                                         ColumnLayout {
                                             Layout.fillWidth: true
@@ -1701,13 +2172,15 @@ ApplicationWindow {
                                             RowLayout {
                                                 Layout.fillWidth: true
                                                 Text {
-                                                    text: folderName
+                                                    Layout.maximumWidth: Math.max(120, bulkRow.width * 0.45)
+                                                    text: bulkRow.folderName
                                                     color: window.textPrimary
                                                     font.pixelSize: 13
                                                     font.weight: Font.DemiBold
+                                                    elide: Text.ElideMiddle
                                                 }
                                                 Text {
-                                                    text: apkName + "  •  " + obbSummary
+                                                    text: bulkRow.apkName + "  •  " + bulkRow.obbSummary
                                                     color: "#777777"
                                                     font.pixelSize: 10
                                                     Layout.fillWidth: true
@@ -1716,55 +2189,73 @@ ApplicationWindow {
                                             }
                                             Text {
                                                 Layout.fillWidth: true
-                                                text: currentPackage + "  →  " + targetPackage
+                                                text: bulkRow.currentPackage + "  →  " + bulkRow.targetPackage
                                                 color: "#a9a9a9"
                                                 font.pixelSize: 11
                                                 elide: Text.ElideMiddle
                                             }
                                             Text {
                                                 Layout.fillWidth: true
-                                                text: itemDetail
-                                                color: "#777777"
+                                                text: bulkRow.itemDetail
+                                                color: bulkRow.itemTone === "error" ? "#d58a84" : "#777777"
                                                 font.pixelSize: 10
                                                 elide: Text.ElideRight
+                                                ToolTip.visible: detailHover.containsMouse && truncated
+                                                ToolTip.text: bulkRow.itemDetail
+                                                ToolTip.delay: 400
+                                                MouseArea {
+                                                    id: detailHover
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    acceptedButtons: Qt.NoButton
+                                                }
                                             }
                                         }
                                         Rectangle {
                                             Layout.preferredWidth: statusText.implicitWidth + 18
                                             Layout.preferredHeight: 26
                                             radius: 13
-                                            color: itemTone === "success" ? "#263c32"
-                                                 : itemTone === "error" ? "#482b29"
-                                                 : itemTone === "warning" ? "#443b25"
+                                            color: bulkRow.itemTone === "success" ? "#263c32"
+                                                 : bulkRow.itemTone === "error" ? "#482b29"
+                                                 : bulkRow.itemTone === "warning" ? "#443b25"
                                                  : "#303030"
                                             Text {
                                                 id: statusText
                                                 anchors.centerIn: parent
-                                                text: itemStatus
+                                                text: bulkRow.itemStatus
                                                 color: "#d0d0d0"
                                                 font.pixelSize: 10
                                                 font.weight: Font.Medium
                                             }
                                         }
                                         AppButton {
+                                            visible: bulkRow.itemBuilt
+                                            text: "Open"
+                                            quiet: true
+                                            tip: "Open this game's finished output folder"
+                                            onClicked: bulkController.openOutput(bulkRow.index)
+                                        }
+                                        AppButton {
+                                            visible: bulkRow.itemTone === "error" && !bulkController.isBusy
+                                            text: "Copy error"
+                                            quiet: true
+                                            tip: "Copy this entry's error message"
+                                            onClicked: bulkController.copyDetail(bulkRow.index)
+                                        }
+                                        AppButton {
                                             text: "Remove"
                                             quiet: true
                                             enabled: !bulkController.isBusy
-                                            onClicked: bulkController.removeItem(index)
+                                            onClicked: bulkController.removeItem(bulkRow.index)
                                         }
                                     }
-                                    Rectangle {
+                                    ThinProgress {
                                         anchors.left: parent.left
                                         anchors.right: parent.right
                                         anchors.bottom: parent.bottom
-                                        height: itemProgress > 0 && itemProgress < 1 ? 2 : 0
-                                        color: "#303030"
-                                        Rectangle {
-                                            width: parent.width * itemProgress
-                                            height: parent.height
-                                            color: window.accent
-                                            Behavior on width { NumberAnimation { duration: 100 } }
-                                        }
+                                        visible: bulkRow.itemProgress > 0 && bulkRow.itemProgress < 1
+                                        value: bulkRow.itemProgress
+                                        fillColor: window.accent
                                     }
                                 }
                             }
@@ -1910,21 +2401,25 @@ ApplicationWindow {
                                 onClicked: bulkController.requestInstall()
                             }
                             AppButton {
+                                visible: bulkController.hasInstalled
+                                text: "Remove finished"
+                                quiet: true
+                                enabled: !bulkController.isBusy
+                                tip: "Drop installed games from the queue"
+                                onClicked: bulkController.removeFinished()
+                            }
+                            AppButton {
                                 text: "Clear"
                                 enabled: !bulkController.isBusy && bulkController.count > 0
                                 onClicked: bulkController.clear()
                             }
                         }
-                        Rectangle {
+                        ThinProgress {
                             Layout.fillWidth: true
                             Layout.preferredHeight: bulkController.isBusy ? 2 : 0
-                            color: "#303030"
-                            Rectangle {
-                                width: parent.width * bulkController.progress
-                                height: parent.height
-                                color: window.accent
-                                Behavior on width { NumberAnimation { duration: 120 } }
-                            }
+                            visible: bulkController.isBusy
+                            value: bulkController.progress
+                            fillColor: window.accent
                         }
                     }
                 }
@@ -1936,46 +2431,36 @@ ApplicationWindow {
                     line: window.line
                     panel: window.panel
                     accent: window.accent
+                    pageMargin: window.pageMargin
                 }
 
                 // Settings page
                 Item {
-                    ScrollView {
+                    PageScroller {
+                        id: settingsScroll
                         anchors.fill: parent
-                        contentWidth: availableWidth
-                        clip: true
+                        page: settingsColumn
 
                         ColumnLayout {
-                            width: parent.width
+                            id: settingsColumn
+                            x: window.pageMargin
+                            y: settingsScroll.topInset
+                            width: settingsScroll.width - 2 * window.pageMargin
                             spacing: 18
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.top: parent.top
-                            anchors.leftMargin: 30
-                            anchors.rightMargin: 30
-                            anchors.topMargin: 16
-                            anchors.bottomMargin: 28
 
-                            Rectangle {
+                            Panel {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 211
-                                radius: 3
-                                color: window.panel
-                                border.width: 1
-                                border.color: window.line
+                                Layout.preferredHeight: toolsColumn.implicitHeight + 36
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: toolsColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: 18
                                     spacing: 8
                                     RowLayout {
                                         Layout.fillWidth: true
-                                        Text {
-                                            text: "ANDROID TOOLS"
-                                            color: "#777777"
-                                            font.pixelSize: 9
-                                            font.weight: Font.DemiBold
-                                            font.letterSpacing: 1
-                                        }
+                                        SectionLabel { text: "ANDROID TOOLS" }
                                         Item { Layout.fillWidth: true }
                                         Text {
                                             text: toolController.allReady ? "READY" : "NEEDS ATTENTION"
@@ -2001,29 +2486,38 @@ ApplicationWindow {
                                                      : "#d0b15b"
                                             }
                                             Text {
+                                                Layout.maximumWidth: toolsColumn.width * 0.5
                                                 text: modelData.label + " " + modelData.version
                                                 color: window.textPrimary
                                                 font.pixelSize: 12
                                                 font.weight: Font.Medium
+                                                elide: Text.ElideRight
                                             }
                                             Item { Layout.fillWidth: true }
                                             Text {
+                                                Layout.maximumWidth: toolsColumn.width * 0.5
                                                 text: modelData.detail
                                                 color: window.textSecondary
                                                 font.pixelSize: 11
+                                                elide: Text.ElideMiddle
+                                                ToolTip.visible: toolDetailHover.containsMouse && truncated
+                                                ToolTip.text: modelData.detail
+                                                ToolTip.delay: 400
+                                                MouseArea {
+                                                    id: toolDetailHover
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    acceptedButtons: Qt.NoButton
+                                                }
                                             }
                                         }
                                     }
-                                    Rectangle {
+                                    ThinProgress {
                                         Layout.fillWidth: true
-                                        Layout.preferredHeight: toolController.isBusy ? 2 : 1
+                                        thickness: toolController.isBusy ? 2 : 1
+                                        value: toolController.isBusy ? toolController.progress : 0
                                         color: "#333333"
-                                        Rectangle {
-                                            width: parent.width * toolController.progress
-                                            height: parent.height
-                                            color: window.accent
-                                            Behavior on width { NumberAnimation { duration: 120 } }
-                                        }
+                                        fillColor: window.accent
                                     }
                                     RowLayout {
                                         Layout.fillWidth: true
@@ -2054,29 +2548,25 @@ ApplicationWindow {
                                         }
                                         AppButton {
                                             text: toolController.actionLabel
+                                            enabled: !toolController.isBusy
                                             onClicked: toolController.runAction()
                                         }
                                     }
                                 }
                             }
 
-                            Rectangle {
+                            Panel {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 236
-                                radius: 3
-                                color: window.panel
-                                border.width: 1
-                                border.color: window.line
+                                Layout.preferredHeight: buildDefaultsColumn.implicitHeight + 36
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: buildDefaultsColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: 18
                                     spacing: 0
-                                    Text {
+                                    SectionLabel {
                                         text: "BUILD DEFAULTS"
-                                        color: "#777777"
-                                        font.pixelSize: 9
-                                        font.weight: Font.DemiBold
-                                        font.letterSpacing: 1
                                         Layout.bottomMargin: 8
                                     }
                                     SettingRow {
@@ -2100,30 +2590,81 @@ ApplicationWindow {
                                         checked: appController.settings.automaticPreflight
                                         onChanged: value => appController.setSetting("automatic_preflight", value)
                                     }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 64
+                                        spacing: 10
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 3
+                                            Text {
+                                                text: "Default app ID tag"
+                                                color: "#e2e2e2"
+                                                font.pixelSize: 13
+                                                font.weight: Font.Medium
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: "Tag inserted into newly selected package IDs, e.g. com."
+                                                      + appController.settings.defaultTag + ".studio.game"
+                                                color: "#848484"
+                                                font.pixelSize: 11
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                        Repeater {
+                                            model: ["mr", "dev", "test", "qa"]
+                                            delegate: AppButton {
+                                                required property string modelData
+                                                text: "." + modelData
+                                                implicitHeight: 30
+                                                leftPadding: 9
+                                                rightPadding: 9
+                                                font.pixelSize: 11
+                                                primary: appController.settings.defaultTag === modelData
+                                                onClicked: appController.setDefaultTag(modelData)
+                                            }
+                                        }
+                                        TextField {
+                                            id: defaultTagField
+                                            Layout.preferredWidth: 110
+                                            Layout.preferredHeight: 30
+                                            text: appController.settings.defaultTag
+                                            placeholderText: "custom"
+                                            color: window.textPrimary
+                                            font.pixelSize: 12
+                                            selectByMouse: true
+                                            leftPadding: 9
+                                            rightPadding: 9
+                                            onEditingFinished: {
+                                                if (text !== appController.settings.defaultTag)
+                                                    appController.setDefaultTag(text)
+                                            }
+                                            background: Rectangle {
+                                                radius: 3
+                                                color: "#181818"
+                                                border.width: 1
+                                                border.color: defaultTagField.activeFocus ? window.accent : "#454545"
+                                            }
+                                        }
+                                    }
                                 }
                             }
 
-                            Rectangle {
+                            Panel {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 116
-                                radius: 3
-                                color: window.panel
-                                border.width: 1
-                                border.color: window.line
+                                Layout.preferredHeight: cleanupRow.implicitHeight + 36
                                 RowLayout {
-                                    anchors.fill: parent
+                                    id: cleanupRow
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: 18
                                     spacing: 16
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         spacing: 4
-                                        Text {
-                                            text: "OLD OUTPUT CLEANUP"
-                                            color: "#777777"
-                                            font.pixelSize: 9
-                                            font.weight: Font.DemiBold
-                                            font.letterSpacing: 1
-                                        }
+                                        SectionLabel { text: "OLD OUTPUT CLEANUP" }
                                         Text {
                                             Layout.fillWidth: true
                                             text: "Move a finished folder created by this app to Trash after a report safety check."
@@ -2144,23 +2685,18 @@ ApplicationWindow {
                                 }
                             }
 
-                            Rectangle {
+                            Panel {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 238
-                                radius: 3
-                                color: window.panel
-                                border.width: 1
-                                border.color: window.line
+                                Layout.preferredHeight: appColumn.implicitHeight + 36
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: appColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: 18
                                     spacing: 0
-                                    Text {
+                                    SectionLabel {
                                         text: "APP"
-                                        color: "#777777"
-                                        font.pixelSize: 9
-                                        font.weight: Font.DemiBold
-                                        font.letterSpacing: 1
                                         Layout.bottomMargin: 8
                                     }
                                     SettingRow {
@@ -2203,37 +2739,26 @@ ApplicationWindow {
                                 }
                             }
 
-                            Rectangle {
+                            Panel {
                                 Layout.fillWidth: true
-                                Layout.preferredHeight: 206
-                                radius: 3
-                                color: window.panel
-                                border.width: 1
-                                border.color: window.line
+                                Layout.preferredHeight: signingColumn.implicitHeight + 36
                                 ColumnLayout {
-                                    anchors.fill: parent
+                                    id: signingColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
                                     anchors.margins: 18
                                     spacing: 8
-                                    Text {
-                                        text: "SIGNING IDENTITY"
-                                        color: "#777777"
-                                        font.pixelSize: 9
-                                        font.weight: Font.DemiBold
-                                        font.letterSpacing: 1
-                                    }
+                                    SectionLabel { text: "SIGNING IDENTITY" }
                                     Text {
                                         Layout.fillWidth: true
                                         text: appController.signingStatus
                                         color: "#a5a5a5"
                                         font.pixelSize: 12
-                                        elide: Text.ElideRight
+                                        wrapMode: Text.WordWrap
                                     }
-                                    Text {
+                                    SectionLabel {
                                         text: "DEFAULT BACKUP LOCATION"
-                                        color: "#777777"
-                                        font.pixelSize: 9
-                                        font.weight: Font.DemiBold
-                                        font.letterSpacing: 1
                                         Layout.topMargin: 3
                                     }
                                     RowLayout {
@@ -2312,6 +2837,285 @@ ApplicationWindow {
                                             )
                                         }
                                         Item { Layout.fillWidth: true }
+                                    }
+                                }
+                            }
+
+                            Panel {
+                                visible: appController.wirelessSupported
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: wirelessColumn.implicitHeight + 36
+                                ColumnLayout {
+                                    id: wirelessColumn
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.margins: 18
+                                    spacing: 10
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        SectionLabel { text: "WIRELESS ADB" }
+                                        Item { Layout.fillWidth: true }
+                                        Text {
+                                            text: appController.isWirelessDevice ? "CONNECTED OVER WI-FI"
+                                                : appController.wirelessBusy ? "WORKING…" : ""
+                                            color: appController.isWirelessDevice ? "#78b894" : "#9a9a9a"
+                                            font.pixelSize: 9
+                                            font.weight: Font.DemiBold
+                                            font.letterSpacing: 0.6
+                                        }
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: "Connect the headset by USB once and press Enable over USB, or enter the "
+                                              + "address shown in the headset's Wireless debugging settings. The Quest "
+                                              + "must be on the same Wi-Fi network and stays reachable until it reboots. "
+                                              + "Every successful connection is saved below."
+                                        color: window.textSecondary
+                                        font.pixelSize: 11
+                                        wrapMode: Text.WordWrap
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        TextField {
+                                            id: wirelessField
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 34
+                                            text: appController.settings.lastWirelessAddress
+                                            placeholderText: "192.168.1.20:5555  (or paste an adb connect line)"
+                                            color: window.textPrimary
+                                            font.pixelSize: 12
+                                            selectByMouse: true
+                                            leftPadding: 10
+                                            rightPadding: 10
+                                            enabled: !appController.wirelessBusy
+                                            onAccepted: appController.connectWireless(text)
+                                            background: Rectangle {
+                                                radius: 3
+                                                color: "#181818"
+                                                border.width: 1
+                                                border.color: wirelessField.activeFocus ? window.accent : "#454545"
+                                            }
+                                        }
+                                        AppButton {
+                                            text: "Connect"
+                                            primary: true
+                                            enabled: !appController.wirelessBusy && wirelessField.text.trim().length > 0
+                                            tip: "adb connect to this address and remember it"
+                                            onClicked: appController.connectWireless(wirelessField.text)
+                                        }
+                                        AppButton {
+                                            text: "Enable over USB"
+                                            enabled: !appController.wirelessBusy
+                                                     && appController.deviceTone === "success"
+                                                     && !appController.isWirelessDevice
+                                            tip: "Switch the USB-connected headset to TCP/IP ADB on port 5555, connect, and remember it"
+                                            onClicked: appController.enableWirelessOverUsb()
+                                        }
+                                    }
+
+                                    // Saved Quests widget
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.topMargin: 4
+                                        Layout.preferredHeight: savedColumn.implicitHeight + 2
+                                        radius: 4
+                                        color: "#1a1a1a"
+                                        border.width: 1
+                                        border.color: "#353535"
+                                        ColumnLayout {
+                                            id: savedColumn
+                                            anchors.left: parent.left
+                                            anchors.right: parent.right
+                                            anchors.top: parent.top
+                                            anchors.margins: 1
+                                            spacing: 0
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 36
+                                                Layout.leftMargin: 12
+                                                Layout.rightMargin: 8
+                                                spacing: 8
+                                                SectionLabel {
+                                                    text: "SAVED QUESTS  •  " + appController.savedWirelessDevices.length
+                                                }
+                                                Item { Layout.fillWidth: true }
+                                                AppButton {
+                                                    visible: appController.isWirelessDevice || appController.savedWirelessDevices.length > 0
+                                                    text: "Disconnect all"
+                                                    quiet: true
+                                                    implicitHeight: 26
+                                                    leftPadding: 9; rightPadding: 9
+                                                    font.pixelSize: 11
+                                                    enabled: !appController.wirelessBusy
+                                                    tip: "adb disconnect — drops every wireless ADB session"
+                                                    onClicked: appController.disconnectAllWireless()
+                                                }
+                                                AppButton {
+                                                    visible: appController.savedWirelessDevices.length > 0
+                                                    text: "Forget all"
+                                                    quiet: true
+                                                    danger: false
+                                                    implicitHeight: 26
+                                                    leftPadding: 9; rightPadding: 9
+                                                    font.pixelSize: 11
+                                                    enabled: !appController.wirelessBusy
+                                                    onClicked: appController.forgetAllWirelessDevices()
+                                                }
+                                            }
+                                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#2f2f2f" }
+                                            Text {
+                                                visible: appController.savedWirelessDevices.length === 0
+                                                Layout.fillWidth: true
+                                                Layout.margins: 14
+                                                text: "No saved Quests yet. Connect once — over USB with Enable over USB, or by address — and it appears here with its name, address, and last connection time."
+                                                color: "#8f8f8f"
+                                                font.pixelSize: 11
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Repeater {
+                                                model: appController.savedWirelessDevices
+                                                delegate: Rectangle {
+                                                    id: savedRow
+                                                    required property var modelData
+                                                    required property int index
+                                                    readonly property bool isCurrent: appController.isWirelessDevice
+                                                                                       && appController.currentSerial === modelData.address
+                                                    Layout.fillWidth: true
+                                                    Layout.preferredHeight: 56
+                                                    color: index % 2 ? "#1c1c1c" : "transparent"
+                                                    RowLayout {
+                                                        anchors.fill: parent
+                                                        anchors.leftMargin: 12
+                                                        anchors.rightMargin: 8
+                                                        spacing: 10
+                                                        Rectangle {
+                                                            Layout.preferredWidth: 30
+                                                            Layout.preferredHeight: 30
+                                                            radius: 15
+                                                            color: savedRow.isCurrent ? "#25382f" : "#2a2a2a"
+                                                            IconImage {
+                                                                anchors.centerIn: parent
+                                                                width: 14; height: 14
+                                                                sourceSize.width: 14; sourceSize.height: 14
+                                                                source: Qt.resolvedUrl("../assets/icon-wifi.svg")
+                                                                color: savedRow.isCurrent ? "#70b18f" : "#9a9a9a"
+                                                            }
+                                                        }
+                                                        ColumnLayout {
+                                                            Layout.fillWidth: true
+                                                            spacing: 2
+                                                            RowLayout {
+                                                                Layout.fillWidth: true
+                                                                spacing: 8
+                                                                TextField {
+                                                                    id: savedLabel
+                                                                    Layout.preferredWidth: 200
+                                                                    Layout.preferredHeight: 26
+                                                                    text: savedRow.modelData.label
+                                                                    placeholderText: "Quest"
+                                                                    color: window.textPrimary
+                                                                    font.pixelSize: 12
+                                                                    font.weight: Font.Medium
+                                                                    selectByMouse: true
+                                                                    leftPadding: 6
+                                                                    rightPadding: 6
+                                                                    onEditingFinished: {
+                                                                        if (text !== savedRow.modelData.label)
+                                                                            appController.renameWirelessDevice(savedRow.modelData.address, text)
+                                                                    }
+                                                                    background: Rectangle {
+                                                                        radius: 3
+                                                                        color: savedLabel.activeFocus || savedLabel.hovered ? "#181818" : "transparent"
+                                                                        border.width: 1
+                                                                        border.color: savedLabel.activeFocus ? window.accent
+                                                                                    : savedLabel.hovered ? "#3a3a3a" : "transparent"
+                                                                    }
+                                                                    ToolTip.visible: hovered && !activeFocus
+                                                                    ToolTip.delay: 600
+                                                                    ToolTip.text: "Click to rename"
+                                                                }
+                                                                Rectangle {
+                                                                    visible: savedRow.isCurrent
+                                                                    implicitWidth: connectedTag.implicitWidth + 14
+                                                                    implicitHeight: 18
+                                                                    radius: 9
+                                                                    color: "#263b32"
+                                                                    Text {
+                                                                        id: connectedTag
+                                                                        anchors.centerIn: parent
+                                                                        text: "Connected"
+                                                                        color: "#78b894"
+                                                                        font.pixelSize: 9
+                                                                        font.weight: Font.DemiBold
+                                                                    }
+                                                                }
+                                                                Item { Layout.fillWidth: true }
+                                                            }
+                                                            Text {
+                                                                Layout.fillWidth: true
+                                                                Layout.leftMargin: 6
+                                                                text: savedRow.modelData.address
+                                                                      + (savedRow.modelData.last_connected
+                                                                         ? "  •  last connected " + savedRow.modelData.last_connected
+                                                                         : "")
+                                                                color: "#8d8d8d"
+                                                                font.pixelSize: 10
+                                                                elide: Text.ElideMiddle
+                                                            }
+                                                        }
+                                                        AppButton {
+                                                            visible: !savedRow.isCurrent
+                                                            text: "Connect"
+                                                            implicitHeight: 28
+                                                            leftPadding: 10; rightPadding: 10
+                                                            font.pixelSize: 11
+                                                            enabled: !appController.wirelessBusy
+                                                            onClicked: appController.connectWireless(savedRow.modelData.address)
+                                                        }
+                                                        AppButton {
+                                                            visible: savedRow.isCurrent
+                                                            text: "Disconnect"
+                                                            implicitHeight: 28
+                                                            leftPadding: 10; rightPadding: 10
+                                                            font.pixelSize: 11
+                                                            enabled: !appController.wirelessBusy
+                                                            onClicked: appController.disconnectWirelessAddress(savedRow.modelData.address)
+                                                        }
+                                                        AppButton {
+                                                            text: "Copy"
+                                                            quiet: true
+                                                            implicitHeight: 28
+                                                            leftPadding: 9; rightPadding: 9
+                                                            font.pixelSize: 11
+                                                            tip: "Copy an adb connect command for this Quest"
+                                                            onClicked: appController.copyWirelessCommand(savedRow.modelData.address)
+                                                        }
+                                                        AppButton {
+                                                            text: "Forget"
+                                                            quiet: true
+                                                            implicitHeight: 28
+                                                            leftPadding: 9; rightPadding: 9
+                                                            font.pixelSize: 11
+                                                            enabled: !appController.wirelessBusy
+                                                            onClicked: appController.forgetWirelessDevice(savedRow.modelData.address)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: appController.wirelessStatus.length > 0
+                                        text: appController.wirelessStatus
+                                        color: appController.wirelessTone === "error" ? "#d98a82"
+                                             : appController.wirelessTone === "success" ? "#78b894"
+                                             : appController.wirelessTone === "warning" ? "#d0ad68"
+                                             : window.textSecondary
+                                        font.pixelSize: 11
+                                        wrapMode: Text.WordWrap
                                     }
                                 }
                             }

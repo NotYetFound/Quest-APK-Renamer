@@ -48,10 +48,26 @@ def _quest_space_requirement(
     return int(apk_size * 1.25) + (obb_size if copy_obbs else 0) + 128 * MIB
 
 
+def _existing_ancestor(path: Path) -> Path:
+    probe = path
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    return probe
+
+
 class AutomaticPreflight:
-    def __init__(self, *, tools_ready: bool, tool_problems: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        *,
+        tools_ready: bool,
+        tool_problems: tuple[str, ...] = (),
+        cache_root: Path | None = None,
+    ) -> None:
         self.tools_ready = tools_ready
         self.tool_problems = tool_problems
+        # Where apktool decodes and the signer writes; may be a different drive
+        # from the output folder and must be checked separately.
+        self.cache_root = cache_root
 
     def check(
         self,
@@ -152,6 +168,8 @@ class AutomaticPreflight:
             output_problem = "The output folder cannot contain the source folder."
         elif output.exists() and (not output.is_dir() or any(output.iterdir())):
             output_problem = "The output folder already exists and is not empty."
+        elif not os.access(_existing_ancestor(output.parent), os.W_OK):
+            output_problem = "The save location cannot be written to."
         checks.append(
             ReadinessCheck(
                 "output",
@@ -177,14 +195,38 @@ class AutomaticPreflight:
         host_state = CheckState.PASSED
         host_detail = "There is enough working space on this computer."
         try:
-            output_parent = request.output_root.parent
-            probe = output_parent
-            while not probe.exists() and probe != probe.parent:
-                probe = probe.parent
-            free = shutil.disk_usage(probe).free
-            if free < host_required:
-                host_state = CheckState.FAILED
-                host_detail = "The output drive does not have enough free working space."
+            output_probe = _existing_ancestor(request.output_root.parent)
+            # Decoded trees and the unsigned/signed APKs live in the cache; the final
+            # APK and OBB copies land in the output. Check each drive for its share,
+            # or the combined amount when both are on the same filesystem.
+            cache_required = (apk_size * 6 + 256 * MIB) if apk_exists else 0
+            output_required = (int(apk_size * 1.25) + obb_size) if apk_exists else 0
+            cache_probe = (
+                _existing_ancestor(self.cache_root) if self.cache_root is not None else None
+            )
+            same_drive = (
+                cache_probe is None
+                or os.stat(cache_probe).st_dev == os.stat(output_probe).st_dev
+            )
+            output_free = shutil.disk_usage(output_probe).free
+            if same_drive:
+                if output_free < host_required:
+                    host_state = CheckState.FAILED
+                    host_detail = (
+                        "The output drive does not have enough free working space."
+                    )
+            else:
+                assert cache_probe is not None
+                cache_free = shutil.disk_usage(cache_probe).free
+                if cache_free < max(512 * MIB, cache_required):
+                    host_state = CheckState.FAILED
+                    host_detail = (
+                        "The app cache drive does not have enough free working space "
+                        "for decoding and signing."
+                    )
+                elif output_free < output_required + 64 * MIB:
+                    host_state = CheckState.FAILED
+                    host_detail = "The output drive does not have enough free space."
         except OSError:
             host_state = CheckState.WARNING
             host_detail = "Free space on the output drive could not be checked."

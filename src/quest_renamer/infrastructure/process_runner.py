@@ -4,17 +4,69 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import signal
 import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
+
+_STACK_NOISE = re.compile(r"^\s*(at |\.\.\. \d+ more|Caused by: |\s*$)")
+_DIAGNOSTIC = re.compile(
+    r"(Caused by:|Exception|Error\b|error:|E: |W: |brut\.|failed|Failed|cannot|Cannot)"
+)
+
+
+def describe_command_failure(output: tuple[str, ...]) -> str:
+    """Pick the most meaningful line from tool output for a one-line error.
+
+    Java tools end with a stack trace, so the literal last line is usually
+    ``... 13 more``. Prefer the last line that reads like a diagnostic and skip
+    stack frames; fall back to the last non-empty line.
+    """
+    if not output:
+        return "No diagnostic output was produced."
+    for line in reversed(output):
+        if _STACK_NOISE.match(line):
+            continue
+        if _DIAGNOSTIC.search(line):
+            return line.strip()
+    for line in reversed(output):
+        if line.strip() and not _STACK_NOISE.match(line):
+            return line.strip()
+    return output[-1].strip()
+
+
+_JAVA_ENCODING_FLAGS = (
+    "-Dfile.encoding=UTF-8",
+    "-Dstdout.encoding=UTF-8",
+    "-Dstderr.encoding=UTF-8",
+    "-Dsun.stdout.encoding=UTF-8",
+    "-Dsun.stderr.encoding=UTF-8",
+)
+
+
+def _with_java_encoding(command: tuple[str, ...]) -> tuple[str, ...]:
+    """Force UTF-8 output for Java tools so non-ASCII paths survive on Windows.
+
+    The flags go right after the executable, before ``-jar``; unknown system
+    properties are ignored by every JDK, so older system Javas stay compatible.
+    """
+    if not command:
+        return command
+    executable = os.path.basename(command[0]).lower()
+    if executable not in {"java", "java.exe", "javaw", "javaw.exe"}:
+        return command
+    if any(part.startswith("-Dfile.encoding=") for part in command[1:]):
+        return command
+    return (command[0], *_JAVA_ENCODING_FLAGS, *command[1:])
 
 
 class CommandFailed(RuntimeError):
@@ -24,7 +76,7 @@ class CommandFailed(RuntimeError):
         self.command = command
         self.returncode = returncode
         self.output = output
-        detail = output[-1] if output else "No diagnostic output was produced."
+        detail = describe_command_failure(output)
         super().__init__(f"Command failed with exit code {returncode}: {detail}")
 
 
@@ -75,9 +127,11 @@ class ProcessRunner:
             creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) | int(
                 getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
             )
+        launch = _with_java_encoding(command)
         process = subprocess.Popen(
-            command,
+            launch,
             cwd=cwd,
+            stdin=subprocess.DEVNULL,  # a prompting tool must fail, never hang
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -102,7 +156,7 @@ class ProcessRunner:
 
         reader = threading.Thread(target=read_output, daemon=True)
         reader.start()
-        output: list[str] = []
+        output: deque[str] = deque(maxlen=500)
         reader_finished = False
         started = time.monotonic()
         while process.poll() is None or not reader_finished:
@@ -129,8 +183,6 @@ class ProcessRunner:
                 line = line.replace(secret, "<hidden>")
             if line:
                 output.append(line)
-                if len(output) > 500:
-                    output.pop(0)
                 if log:
                     log(line)
         stdout.close()

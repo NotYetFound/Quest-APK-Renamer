@@ -10,6 +10,19 @@ from quest_renamer.domain.models import BundleDraft
 from quest_renamer.domain.obb_names import is_safe_preserved_obb, parse_obb_filename
 
 
+def _files_with_suffix(folder: Path, suffix: str) -> list[Path]:
+    """Direct children with the given extension, matched case-insensitively.
+
+    Windows users regularly ship ``Game.APK``/``.OBB``; ``Path.glob`` is
+    case-sensitive on Linux and macOS and would report "no APK found".
+    """
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return []
+    return sorted(path for path in entries if path.suffix.lower() == suffix)
+
+
 class BundleSelectionError(ValueError):
     """A selected folder cannot be represented as one unambiguous bundle."""
 
@@ -42,7 +55,9 @@ class LocalBundleInspector:
         if not folder.is_dir():
             raise BundleSelectionError("That folder no longer exists.")
 
-        apks = tuple(sorted(path for path in folder.glob("*.apk") if path.is_file()))
+        apks = tuple(
+            sorted(path for path in _files_with_suffix(folder, ".apk") if path.is_file())
+        )
         if not apks:
             raise BundleSelectionError("No APK was found in the selected folder.")
         if len(apks) > 1:
@@ -72,7 +87,7 @@ class LocalBundleInspector:
             package_files = tuple(
                 sorted(
                     path.resolve()
-                    for path in package_dir.glob("*.obb")
+                    for path in _files_with_suffix(package_dir, ".obb")
                     if path.is_file()
                 )
             )
@@ -95,7 +110,7 @@ class LocalBundleInspector:
 
         candidates = {
             path.resolve()
-            for path in folder.glob("*.obb")
+            for path in _files_with_suffix(folder, ".obb")
             if path.is_file()
             and (parsed := parse_obb_filename(path.name)) is not None
             and parsed.package_name.casefold() == package_name.casefold()
@@ -104,7 +119,7 @@ class LocalBundleInspector:
             path.resolve()
             for child in folder.iterdir()
             if child.is_dir()
-            for path in child.glob("*.obb")
+            for path in _files_with_suffix(child, ".obb")
             if path.is_file()
             and (parsed := parse_obb_filename(path.name)) is not None
             and parsed.package_name.casefold() == package_name.casefold()
@@ -112,7 +127,7 @@ class LocalBundleInspector:
         if package_dir.is_dir():
             candidates.update(
                 path.resolve()
-                for path in package_dir.glob("*.obb")
+                for path in _files_with_suffix(package_dir, ".obb")
                 if path.is_file() and is_safe_preserved_obb(path.name)
             )
         candidates.update(
@@ -144,7 +159,10 @@ class LocalBundleInspector:
             package_obb_dir = folder / package_name
             if package_obb_dir.is_dir():
                 package_obbs = tuple(
-                    sorted(path.resolve() for path in package_obb_dir.glob("*.obb"))
+                    sorted(
+                        path.resolve()
+                        for path in _files_with_suffix(package_obb_dir, ".obb")
+                    )
                 )
                 unsafe = tuple(
                     path.name
@@ -167,12 +185,12 @@ class LocalBundleInspector:
                 obbs = tuple(
                     sorted(
                         path.resolve()
-                        for path in folder.glob("*.obb")
+                        for path in _files_with_suffix(folder, ".obb")
                         if _obb_package(path).casefold() == package_name.casefold()
                     )
                 )
         else:
-            apks = tuple(path for path in folder.glob("*.apk") if path.is_file())
+            apks = tuple(path for path in _files_with_suffix(folder, ".apk") if path.is_file())
             # An exact APK in a mixed download folder has no trustworthy way to
             # identify which neighboring expansion files belong to it.
             if not exact_apk or len(apks) == 1:
@@ -180,14 +198,14 @@ class LocalBundleInspector:
                     sorted(
                         {
                             path.resolve()
-                            for path in folder.glob("*.obb")
+                            for path in _files_with_suffix(folder, ".obb")
                             if path.is_file()
                         }
                         | {
                             path.resolve()
                             for child in folder.iterdir()
                             if child.is_dir()
-                            for path in child.glob("*.obb")
+                            for path in _files_with_suffix(child, ".obb")
                             if path.is_file()
                         }
                     )

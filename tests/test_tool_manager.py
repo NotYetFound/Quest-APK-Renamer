@@ -34,7 +34,7 @@ class ToolManagerTests(unittest.TestCase):
         response = FakeResponse(b"tool")
         request = Request("https://example.invalid/tool")
         with patch(
-            "quest_renamer.infrastructure.tool_manager.trusted_urlopen",
+            "quest_renamer.infrastructure.trusted_https.trusted_urlopen",
             return_value=response,
         ) as opened:
             returned = _default_open(request, 12.0)

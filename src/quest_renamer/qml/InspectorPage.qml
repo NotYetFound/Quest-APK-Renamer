@@ -10,6 +10,7 @@ Item {
     property color line: "#353535"
     property color panel: "#1f1f1f"
     property color accent: "#4c8abb"
+    property int pageMargin: 30
     property int tabIndex: 0
 
     Connections {
@@ -24,10 +25,19 @@ Item {
         }
     }
 
+    Connections {
+        target: inspectorController
+        // A fresh inspection always starts on the Overview tab.
+        function onAnalysisChanged() {
+            if (!inspectorController.hasAnalysis)
+                root.tabIndex = 0
+        }
+    }
+
     ColumnLayout {
         anchors.fill: parent
-        anchors.leftMargin: 26
-        anchors.rightMargin: 26
+        anchors.leftMargin: root.pageMargin
+        anchors.rightMargin: root.pageMargin
         anchors.topMargin: 16
         anchors.bottomMargin: 26
         spacing: 12
@@ -42,6 +52,7 @@ Item {
                          && !inspectorController.isBusy
                          && !appController.isBusy
                          && !bulkController.isBusy
+                tip: "Inspect the APK currently selected on the Dashboard"
                 onClicked: inspectorController.inspectPath(appController.apkPath)
             }
             AppButton {
@@ -53,13 +64,21 @@ Item {
                 onClicked: fileDialogController.chooseApk(
                     "inspectApk",
                     "Choose an APK to inspect",
-                    inspectorController.apkPath
+                    inspectorController.apkPath || appController.lastSourceFolder
                 )
             }
             AppButton {
                 visible: inspectorController.isBusy
                 text: "Cancel safely"
+                tip: "Stop the inspection at the next safe point"
                 onClicked: inspectorController.cancel()
+            }
+            AppButton {
+                visible: inspectorController.hasAnalysis && !inspectorController.isBusy
+                text: "Copy summary"
+                quiet: true
+                tip: "Copy the overview and signing details as text"
+                onClicked: inspectorController.copySummary()
             }
             AppButton {
                 visible: inspectorController.hasAnalysis && !inspectorController.isBusy
@@ -85,6 +104,7 @@ Item {
             DropArea {
                 id: inspectorDrop
                 anchors.fill: parent
+                enabled: !inspectorController.isBusy
                 onDropped: drop => {
                     if (drop.hasUrls && drop.urls.length > 0)
                         inspectorController.inspectApk(drop.urls[0])
@@ -98,10 +118,12 @@ Item {
                 RowLayout {
                     Layout.fillWidth: true
                     Text {
+                        Layout.maximumWidth: root.width * 0.45
                         text: inspectorController.title
                         color: inspectorController.apkPath ? root.textPrimary : "#777777"
                         font.pixelSize: 14
                         font.weight: Font.DemiBold
+                        elide: Text.ElideMiddle
                     }
                     Text {
                         Layout.fillWidth: true
@@ -161,19 +183,13 @@ Item {
                 }
             }
 
-            Rectangle {
+            ThinProgress {
                 visible: inspectorController.isBusy
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.bottom
-                height: 2
-                color: "#303030"
-                Rectangle {
-                    width: parent.width * inspectorController.progress
-                    height: parent.height
-                    color: root.accent
-                    Behavior on width { NumberAnimation { duration: 100 } }
-                }
+                value: inspectorController.progress
+                fillColor: root.accent
             }
         }
 
@@ -193,10 +209,11 @@ Item {
                     id: tabs
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
-                    currentIndex: root.tabIndex
                     visible: inspectorController.hasAnalysis
                     background: Rectangle { color: "#1c1c1c" }
-                    onCurrentIndexChanged: root.tabIndex = currentIndex
+                    // One-directional: the page owns tabIndex; the bar follows and reports clicks.
+                    Binding { target: tabs; property: "currentIndex"; value: root.tabIndex }
+                    onCurrentIndexChanged: if (root.tabIndex !== currentIndex) root.tabIndex = currentIndex
 
                     Repeater {
                         model: ["Overview", "Signing", "Permissions", "Rename preview"]
@@ -268,11 +285,14 @@ Item {
                     visible: inspectorController.hasAnalysis
                     currentIndex: root.tabIndex
 
-                    ScrollView {
-                        contentWidth: availableWidth
-                        clip: true
+                    PageScroller {
+                        id: overviewScroll
+                        page: overviewColumn
+                        topInset: 0
+                        bottomInset: 12
                         ColumnLayout {
-                            width: parent.width
+                            id: overviewColumn
+                            width: overviewScroll.width
                             spacing: 0
                             Repeater {
                                 model: inspectorController.overviewRows
@@ -308,11 +328,14 @@ Item {
                         }
                     }
 
-                    ScrollView {
-                        contentWidth: availableWidth
-                        clip: true
+                    PageScroller {
+                        id: signingScroll
+                        page: signingColumn
+                        topInset: 0
+                        bottomInset: 12
                         ColumnLayout {
-                            width: parent.width
+                            id: signingColumn
+                            width: signingScroll.width
                             spacing: 0
                             Repeater {
                                 model: inspectorController.signingRows
@@ -346,6 +369,9 @@ Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true
+                            reuseItems: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            ScrollBar.vertical: AppScrollBar {}
                             model: inspectorController.permissionRows
                             delegate: Rectangle {
                                 id: permissionRow
@@ -404,6 +430,9 @@ Item {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             clip: true
+                            reuseItems: true
+                            boundsBehavior: Flickable.StopAtBounds
+                            ScrollBar.vertical: AppScrollBar {}
                             model: inspectorController.referenceRows
                             delegate: Rectangle {
                                 id: referenceRow
