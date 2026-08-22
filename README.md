@@ -45,21 +45,6 @@ an unknown-developer warning — see [Platform notes](#platform-notes).
 4. **Install** — connect the Quest by USB (or Wi-Fi, see below), approve USB debugging once, and
    press **Install built game**. APK and OBBs go over as one verified job with live progress.
 
-## Why people use it
-
-- **Separate copies, same game.** The renamed package installs beside the original, keeps its own
-  data, and can be updated later with the same signing key.
-- **OBBs done right.** Numeric and Unreal `pakchunk` tags are preserved; only the package part of
-  each OBB name changes. On the headset, identical OBBs are reused instead of re-uploaded, changed
-  ones are staged and verified before the old set is removed, and an APK-only install never touches
-  the OBBs that are already there.
-- **It tells you what happened.** Every build leaves `RENAME-REPORT.txt` / `.json` listing the
-  references that were changed and the game data that was deliberately left alone. The Inspector
-  previews the same information for any APK without modifying it.
-- **Safe by default.** Builds happen in an isolated staging folder and are published atomically;
-  interrupted builds are detected on the next launch; source replacement and post-install cleanup
-  are opt-in, verified, and go to the Trash/Recycle Bin rather than being deleted outright.
-
 ## Features
 
 ### Dashboard
