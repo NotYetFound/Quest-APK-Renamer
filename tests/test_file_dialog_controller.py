@@ -264,8 +264,8 @@ class FileDialogControllerTests(unittest.TestCase):
             controller.chooseLibraryArchive("import", "Import", str(root))
             controller.saveLibraryArchive("export", "Export", archive.name, str(root))
 
-            self.assertEqual(opened, [str(archive)])
-            self.assertEqual(saved, [str(archive)])
+            self.assertEqual([Path(value) for value in opened], [archive])
+            self.assertEqual([Path(value) for value in saved], [archive])
             self.assertIn("*.qarlib", open_dialog.name_filters[0])
             self.assertIn("*.qarlib", save_dialog.name_filters[0])
             self.assertEqual(save_dialog.default_suffix, "qarlib")
