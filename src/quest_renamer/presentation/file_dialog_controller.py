@@ -90,17 +90,29 @@ class FileDialogController(QObject):
         elif kind == "apks":
             dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
             dialog.setNameFilters(["Android packages (*.apk)", "All files (*)"])
-        elif kind in {"save_json", "save_log"}:
+        elif kind == "archive":
+            dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+            dialog.setNameFilters(
+                ["Quest APK Renamer Library (*.qarlib)", "All files (*)"]
+            )
+        elif kind in {"save_archive", "save_json", "save_log"}:
+            is_archive = kind == "save_archive"
             is_json = kind == "save_json"
             dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
             dialog.setFileMode(QFileDialog.FileMode.AnyFile)
             dialog.setNameFilters(
                 [
-                    "JSON report (*.json)" if is_json else "Log files (*.log)",
+                    "Quest APK Renamer Library (*.qarlib)"
+                    if is_archive
+                    else "JSON report (*.json)"
+                    if is_json
+                    else "Log files (*.log)",
                     "All files (*)",
                 ]
             )
-            dialog.setDefaultSuffix("json" if is_json else "log")
+            dialog.setDefaultSuffix(
+                "qarlib" if is_archive else "json" if is_json else "log"
+            )
             dialog.selectFile(suggested_name)
         else:
             dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
@@ -213,6 +225,26 @@ class FileDialogController(QObject):
             )
         else:
             self.selectionCancelled.emit(purpose)
+
+    @Slot(str, str, str)
+    def chooseLibraryArchive(self, purpose: str, title: str, initial: str = "") -> None:
+        paths = self._pick("archive", title, initial)
+        if paths:
+            self.fileSelected.emit(purpose, QUrl.fromLocalFile(str(paths[0])))
+        else:
+            self.selectionCancelled.emit(purpose)
+
+    @Slot(str, str, str, str)
+    def saveLibraryArchive(
+        self,
+        purpose: str,
+        title: str,
+        suggested_name: str,
+        initial: str = "",
+    ) -> None:
+        paths = self._pick("save_archive", title, initial, suggested_name)
+        if paths:
+            self.saveSelected.emit(purpose, QUrl.fromLocalFile(str(paths[0])))
 
     @Slot(str, str, str, str)
     def saveJson(

@@ -65,3 +65,14 @@ class DeviceSnapshot:
     model: str = ""
     free_bytes: int | None = None
     detail: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class InstalledQuestApp:
+    """One user-installed Android package reported by a connected headset."""
+
+    package_name: str
+    version_code: str = ""
+    version_name: str = ""
+    app_name: str = ""
+    icon_path: str = ""

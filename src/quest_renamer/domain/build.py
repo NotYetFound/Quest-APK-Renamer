@@ -26,6 +26,8 @@ class BuildResult:
     signing_keystore: Path | None = None
     signing_metadata: Path | None = None
     signing_key_sha256: str = ""
+    app_label: str = ""
+    app_icon: Path | None = None
 
 
 class BuildError(RuntimeError):

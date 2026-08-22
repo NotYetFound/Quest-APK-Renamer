@@ -52,6 +52,7 @@ class GameProfile:
     game_name: str
     original_package: str
     target_package: str
+    app_icon: str = ""
     source_path: str = ""
     output_path: str = ""
     source_version: str = ""
@@ -94,6 +95,7 @@ class GameProfile:
         if not all(isinstance(value.get(name), str) and value[name] for name in required):
             return None
         strings = (
+            "app_icon",
             "source_path",
             "output_path",
             "source_version",
@@ -142,6 +144,7 @@ class GameProfile:
             "game_name": self.game_name,
             "original_package": self.original_package,
             "target_package": self.target_package,
+            "app_icon": self.app_icon,
             "source_path": self.source_path,
             "output_path": self.output_path,
             "source_version": self.source_version,

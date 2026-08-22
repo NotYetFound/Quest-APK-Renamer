@@ -22,6 +22,7 @@ from quest_renamer.domain.inspection import (
 )
 from quest_renamer.domain.operations import CancellationToken
 from quest_renamer.infrastructure.process_runner import ProcessRunner
+from quest_renamer.infrastructure.reference_scanner import count_file_patterns
 from quest_renamer.infrastructure.signer_inspection import (
     inspect_signature_details,
     load_signer_registry,
@@ -254,14 +255,17 @@ def scan_package_references(
         if not path.is_file() or path.is_symlink():
             continue
         relative = path.relative_to(decoded)
-        try:
-            if path.stat().st_size > 64 * 1024 * 1024:
-                continue
-            data = path.read_bytes()
-        except OSError:
+        patterns = (exact, slashed) if slashed != exact else (exact,)
+        counts = count_file_patterns(
+            path,
+            patterns,
+            token,
+            max_size=64 * 1024 * 1024,
+        )
+        if counts is None:
             continue
-        dotted_count = data.count(exact)
-        slashed_count = data.count(slashed) if slashed != exact else 0
+        dotted_count = counts[0]
+        slashed_count = counts[1] if len(counts) > 1 else 0
         occurrences = dotted_count + slashed_count
         if not occurrences:
             continue

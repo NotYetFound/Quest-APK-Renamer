@@ -4,6 +4,55 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.4.5] - 2026-08-21
+
+### Added
+
+- A connected-headset Library view that lists user-installed Quest apps and starts guided APK or
+  complete-folder updates from the selected installed package.
+- Portable `.qarlib` archives for exporting or importing one saved signing identity or the full
+  vault, including profile details, private signing keys, key metadata, cached icons, and integrity
+  hashes.
+- Selectable vault entries with copy-one, copy-all, export, open-key-folder, and safe remove
+  actions. Removing an entry forgets its Library mapping while retaining its key files for recovery.
+- Cached Quest-visible app labels and launcher icons for analyzed builds. Original and renamed
+  packages with the same display name reuse one local icon instead of storing duplicates.
+- Recovery copies and last-known-good backups for damaged Library and settings JSON files.
+
+### Changed
+
+- The Library now opens on the live connected-headset inventory. Its secondary key-vault view
+  shows saved original-to-renamed identities and key health, while update actions and
+  installed-version checks remain tied only to current headset state.
+- OBB filenames retain numeric version tags and Unreal-style tags such as
+  `pakchunk0-Android_ASTC` while only the Android package portion is renamed. Safe asset OBBs in
+  a proven game/package folder keep their original names.
+- Exact APK selections perform a second safe OBB match after analysis learns the real package ID,
+  so matching expansion files are found without claiming neighboring games.
+- Release runtimes, Python build inputs, and GitHub Actions are pinned and verified before use.
+- Library rows and signing-key health are cached until their backing state changes, and the UI now
+  virtualizes large saved/live app lists instead of constructing every row at once.
+- Connected-headset inventory reads package version codes in one package-manager call on current
+  firmware, with a bounded compatibility fallback for older Android package managers.
+- Decoded APK reference scans use bounded-memory streaming for assets and native files, while OBB
+  retries reuse local hashes only while the file size and modification time remain unchanged.
+- Linux packages omit unused Qt translations and development-only QML tooling after frozen and
+  AppImage launch verification.
+
+### Fixed
+
+- Reject mismatched, unsupported, or colliding OBB names before build output can be overwritten.
+- Clean up obsolete numeric and pakchunk OBB files only after an update is fully verified, while
+  preserving unrelated files in the Quest package directory.
+- Restore or retain uniquely named OBB backups when verification fails after APK installation.
+- Prevent stale device-inventory workers from wedging the Library after switching headsets.
+- Apply shared bundled-CA handling to update checks and tool repair across packaged platforms.
+- Bound external build, inspection, signing, and ADB commands with safe timeout/process cleanup.
+- Clear every pending Library/direct-update state when the Dashboard is reset.
+- Fall back correctly when an older Android package manager reports an unsupported version-list
+  option with a successful exit code, and tolerate source files disappearing during preflight.
+- Discard corrupt cached launcher icons so a later analysis can replace them cleanly.
+
 ## [1.4.4] - 2026-08-08
 
 ### Added
@@ -242,6 +291,7 @@ All notable changes to Quest APK Renamer are recorded here.
 - Game-facing text and assets are intentionally excluded.
 - Cleanup refuses folders without the managed-output marker.
 
+[1.4.5]: ../../releases/tag/v1.4.5
 [1.4.4]: ../../releases/tag/v1.4.4
 [1.4.2]: ../../releases/tag/v1.4.2
 [1.4.0]: ../../releases/tag/v1.4.0

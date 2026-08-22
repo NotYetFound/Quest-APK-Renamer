@@ -8,13 +8,30 @@ from quest_renamer.infrastructure.settings_store import JsonSettingsStore
 
 
 class SettingsTests(unittest.TestCase):
-    def test_missing_or_invalid_file_uses_defaults(self) -> None:
+    def test_missing_file_uses_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "settings.json"
             store = JsonSettingsStore(path)
             self.assertEqual(store.load(), AppSettings())
+
+    def test_invalid_settings_are_preserved_before_defaults_are_saved(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = root / "settings.json"
+            store = JsonSettingsStore(path)
             path.write_text("not json", encoding="utf-8")
+
             self.assertEqual(store.load(), AppSettings())
+            self.assertFalse(path.exists())
+            self.assertIsNotNone(store.recovery_path)
+            assert store.recovery_path is not None
+            self.assertEqual(store.recovery_path.read_text(encoding="utf-8"), "not json")
+            self.assertIn("preserved", store.warning)
+
+            store.save(AppSettings(check_updates=False))
+
+            self.assertFalse(store.load().check_updates)
+            self.assertEqual(store.recovery_path, None)
 
     def test_settings_are_saved_atomically_and_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -26,6 +43,22 @@ class SettingsTests(unittest.TestCase):
 
             self.assertEqual(store.load(), settings)
             self.assertFalse(path.with_suffix(".json.tmp").exists())
+            self.assertTrue(path.with_suffix(".json.bak").is_file())
+
+    def test_last_good_settings_are_restored_after_primary_corruption(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "settings.json"
+            store = JsonSettingsStore(path)
+            expected = AppSettings(copy_obbs=False, check_updates=False)
+            store.save(expected)
+            path.write_text("{truncated", encoding="utf-8")
+
+            loaded = store.load()
+
+            self.assertEqual(loaded, expected)
+            self.assertIn("last good backup", store.warning)
+            assert store.recovery_path is not None
+            self.assertEqual(store.recovery_path.read_text(encoding="utf-8"), "{truncated")
 
     def test_unknown_and_wrong_typed_values_do_not_override_defaults(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

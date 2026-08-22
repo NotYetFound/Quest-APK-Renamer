@@ -4,10 +4,15 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.request import Request
 
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
-from quest_renamer.infrastructure.tool_manager import PinnedToolManager, ToolRepairError
+from quest_renamer.infrastructure.tool_manager import (
+    PinnedToolManager,
+    ToolRepairError,
+    _default_open,
+)
 
 
 class FakeResponse(io.BytesIO):
@@ -25,6 +30,18 @@ class FakeResponse(io.BytesIO):
 
 
 class ToolManagerTests(unittest.TestCase):
+    def test_default_opener_uses_shared_trusted_https(self) -> None:
+        response = FakeResponse(b"tool")
+        request = Request("https://example.invalid/tool")
+        with patch(
+            "quest_renamer.infrastructure.tool_manager.trusted_urlopen",
+            return_value=response,
+        ) as opened:
+            returned = _default_open(request, 12.0)
+
+        self.assertIs(returned, response)
+        opened.assert_called_once_with(request, 12.0)
+
     def _manager(
         self,
         root: Path,

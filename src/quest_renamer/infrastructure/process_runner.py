@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import os
 import queue
+import signal
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +28,13 @@ class CommandFailed(RuntimeError):
         super().__init__(f"Command failed with exit code {returncode}: {detail}")
 
 
+class CommandTimedOut(RuntimeError):
+    def __init__(self, command: tuple[str, ...], timeout: float) -> None:
+        self.command = command
+        self.timeout = timeout
+        super().__init__(f"Command exceeded its {timeout:g}-second safety deadline.")
+
+
 @dataclass(frozen=True, slots=True)
 class CommandResult:
     command: tuple[str, ...]
@@ -32,6 +43,11 @@ class CommandResult:
 
 
 class ProcessRunner:
+    def __init__(self, *, default_timeout: float = 30 * 60) -> None:
+        if default_timeout <= 0:
+            raise ValueError("The command deadline must be positive.")
+        self.default_timeout = default_timeout
+
     def run(
         self,
         arguments: Sequence[str | Path],
@@ -41,19 +57,24 @@ class ProcessRunner:
         log: Callable[[str], None] | None = None,
         secret_values: set[str] | None = None,
         check: bool = True,
+        timeout: float | None = None,
     ) -> CommandResult:
         command = tuple(str(value) for value in arguments)
         secrets = {value for value in (secret_values or set()) if value}
         token = token or CancellationToken()
         token.raise_if_cancelled()
+        deadline_seconds = self.default_timeout if timeout is None else timeout
+        if deadline_seconds <= 0:
+            raise ValueError("The command deadline must be positive.")
         if log:
             log("$ " + " ".join("<hidden>" if value in secrets else value for value in command))
 
-        creationflags = (
-            int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            if sys.platform.startswith("win")
-            else 0
-        )
+        on_windows = sys.platform.startswith("win")
+        creationflags = 0
+        if on_windows:
+            creationflags = int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) | int(
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            )
         process = subprocess.Popen(
             command,
             cwd=cwd,
@@ -64,6 +85,7 @@ class ProcessRunner:
             errors="replace",
             bufsize=1,
             creationflags=creationflags,
+            start_new_session=not on_windows,
         )
         stdout = process.stdout
         if stdout is None:
@@ -82,17 +104,20 @@ class ProcessRunner:
         reader.start()
         output: list[str] = []
         reader_finished = False
+        started = time.monotonic()
         while process.poll() is None or not reader_finished:
             if token.is_cancelled() and process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait()
+                self._stop_process_tree(process)
                 reader.join(timeout=1)
                 stdout.close()
                 raise OperationCancelled("Operation cancelled.")
+            if time.monotonic() - started >= deadline_seconds:
+                if log:
+                    log(f"Command timed out after {deadline_seconds:g} seconds.")
+                self._stop_process_tree(process)
+                reader.join(timeout=1)
+                stdout.close()
+                raise CommandTimedOut(command, deadline_seconds)
             try:
                 line = lines.get(timeout=0.1)
             except queue.Empty:
@@ -114,3 +139,28 @@ class ProcessRunner:
         if check and returncode != 0:
             raise CommandFailed(command, returncode, result.output)
         return result
+
+    @staticmethod
+    def _stop_process_tree(process: subprocess.Popen[str]) -> None:
+        if sys.platform.startswith("win"):
+            subprocess.run(
+                ("taskkill", "/PID", str(process.pid), "/T", "/F"),
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=int(getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+            )
+        else:
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            if sys.platform.startswith("win"):
+                process.kill()
+            else:
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+            process.wait()

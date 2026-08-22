@@ -1,7 +1,7 @@
 # Quest APK Renamer
 
-[![Latest release](https://img.shields.io/github/v/release/RockoTheeHut/Quest-APK-Renamer?display_name=tag&sort=semver)](https://github.com/RockoTheeHut/Quest-APK-Renamer/releases/latest)
-[![Tests](https://github.com/RockoTheeHut/Quest-APK-Renamer/actions/workflows/test.yml/badge.svg)](https://github.com/RockoTheeHut/Quest-APK-Renamer/actions/workflows/test.yml)
+[![Latest release](https://img.shields.io/github/v/release/NotYetFound/Quest-APK-Renamer?display_name=tag&sort=semver)](https://github.com/NotYetFound/Quest-APK-Renamer/releases/latest)
+[![Tests](https://github.com/NotYetFound/Quest-APK-Renamer/actions/workflows/test.yml/badge.svg)](https://github.com/NotYetFound/Quest-APK-Renamer/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Rename, rebuild, sign, inspect, and install authorized Meta Quest APK/OBB test bundles from one
@@ -15,11 +15,11 @@ copy a separate Android package ID.
 ## Download
 
 Get the current stable build from the
-[GitHub Releases page](https://github.com/RockoTheeHut/Quest-APK-Renamer/releases/latest).
+[GitHub Releases page](https://github.com/NotYetFound/Quest-APK-Renamer/releases/latest).
 
 | Platform | Recommended download | Alternative |
 | --- | --- | --- |
-| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.4-Setup.exe` | Portable ZIP |
+| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.5-Setup.exe` | Portable ZIP |
 | Linux x86_64 | AppImage | Portable tarball with launcher installer |
 | Apple Silicon macOS | `macOS-arm64.dmg` | — |
 | Intel macOS | `macOS-x86_64.dmg` | — |
@@ -61,19 +61,24 @@ build button unlocks. Folders and individual APKs can also be dropped directly o
 Quick ID presets include `.mr`, `.dev`, `.test`, and `.qa`. Output normally goes into a sibling
 folder ending in ` - Renamed`.
 
-### Automatic game Library and updates
+### Signing-key vault and connected-headset updates
 
 ![Automatic game Library and update actions](docs/screenshots/library.png)
 
-The Library fills itself after successful builds and verified installs. Each entry keeps the
-original package ID, renamed package ID, installed version, managed OBB names, and the exact signing
-identity needed for a compatible update. Select a saved game and choose its newer APK or complete
-game folder; the app verifies the original package and signer, then restores the renamed identity
-automatically.
+The Library opens on the connected Quest's current user-installed apps and versions. Select an app,
+then choose its newer APK or complete game folder. Known original and renamed IDs share cached app
+names and icons; unknown headset-only apps use a neutral fallback without downloading every
+installed APK over USB.
+
+Its secondary signing-key vault records the Quest-visible app name, original and renamed package
+IDs, launcher icon, and exact key from successful signed builds. Choosing the same original game on
+Dashboard restores that renamed ID and key automatically. Vault entries can be copied, removed,
+exported individually, or exported/imported as a complete integrity-checked `.qarlib` backup.
 
 During installation, existing OBBs are compared before transfer. Identical data can be kept or
 renamed directly on the Quest, while changed files are staged and verified before old managed or
-versioned OBBs are removed. This avoids accumulating duplicate versioned OBBs across updates.
+package-matching OBBs are removed. Numeric and Unreal `pakchunk` tags are preserved exactly, and
+safe package-folder asset OBBs keep their original names.
 
 ### Bulk rename and install
 
@@ -157,7 +162,8 @@ capabilities so features do not disappear into release notes or menus.
 - Safe package-ID suggestion plus `.mr`, `.dev`, `.test`, and `.qa` presets.
 - Full APK decode, technical package-reference rewrite, rebuild, persistent signing, signature
   verification, and optional OBB-copy/signing switches in Settings.
-- Matching OBB directory/filename changes and `release.manifest` regeneration.
+- Matching OBB directory/filename changes and `release.manifest` regeneration, including distinct
+  numeric and Unreal `pakchunk` tags plus safe package-folder asset OBBs.
 - Atomic output publishing into a sibling ` - Renamed` folder or a chosen destination.
 - Existing output folders offer **Cancel**, recoverable **Replace existing**, or the next numbered
   output such as ` - Renamed (2)` instead of blocking the build.
@@ -189,6 +195,8 @@ capabilities so features do not disappear into release notes or menus.
 - Sequential APK and OBB installation, installed-package verification, and remote OBB-size
   verification.
 - Retry only failed OBB transfers without reinstalling the APK.
+- Connected-headset inventory with installed package/version details and guided update-source
+  selection; the offline view remains a signing-key vault rather than stale device state.
 - Install progress, safe cancellation, contextual failure reports, and direct access to logs.
 
 ### Output and cleanup controls
@@ -258,7 +266,7 @@ distribution or desktop environment, please open an issue and include the reques
 
 All release packages are built on their matching operating system in GitHub Actions. Linux and
 Windows have hands-on testing; macOS has more limited real-hardware coverage. If something fails,
-please [open an issue](https://github.com/RockoTheeHut/Quest-APK-Renamer/issues/new/choose)—reports
+please [open an issue](https://github.com/NotYetFound/Quest-APK-Renamer/issues/new/choose)—reports
 from less common Linux distributions and desktop environments are especially useful.
 
 ### macOS first launch

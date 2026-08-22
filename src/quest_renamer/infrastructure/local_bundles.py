@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import csv
+from dataclasses import replace
 from pathlib import Path
 
 from quest_renamer.domain.models import BundleDraft
+from quest_renamer.domain.obb_names import is_safe_preserved_obb, parse_obb_filename
 
 
 class BundleSelectionError(ValueError):
     """A selected folder cannot be represented as one unambiguous bundle."""
+
+
+def _obb_package(path: Path) -> str:
+    parsed = parse_obb_filename(path.name)
+    return parsed.package_name if parsed is not None else ""
 
 
 def _release_metadata(path: Path | None) -> dict[str, str]:
@@ -44,36 +51,170 @@ class LocalBundleInspector:
                 f"This folder contains multiple APKs ({names}). Choose one game folder."
             )
 
-        return self._bundle_for_apk(folder, apks[0])
+        return self._bundle_for_apk(folder, apks[0], exact_apk=False)
 
     def inspect_apk(self, apk: Path) -> BundleDraft:
         """Select one exact APK while pairing data from its containing folder."""
         apk = apk.expanduser().resolve()
         if not apk.is_file() or apk.suffix.lower() != ".apk":
             raise BundleSelectionError("That APK no longer exists.")
-        return self._bundle_for_apk(apk.parent, apk)
+        return self._bundle_for_apk(apk.parent, apk, exact_apk=True)
 
-    def _bundle_for_apk(self, folder: Path, apk: Path) -> BundleDraft:
+    def apply_apk_identity(
+        self,
+        bundle: BundleDraft,
+        package_name: str,
+    ) -> BundleDraft:
+        """Attach only expansion files proven to belong to an analyzed APK."""
+        folder = bundle.root.resolve()
+        package_dir = folder / package_name
+        if package_dir.is_dir():
+            package_files = tuple(
+                sorted(
+                    path.resolve()
+                    for path in package_dir.glob("*.obb")
+                    if path.is_file()
+                )
+            )
+            unsafe = tuple(
+                path.name
+                for path in package_files
+                if not is_safe_preserved_obb(path.name)
+            )
+            mismatched = tuple(
+                path.name
+                for path in package_files
+                if (parsed := parse_obb_filename(path.name)) is not None
+                and parsed.package_name.casefold() != package_name.casefold()
+            )
+            if unsafe or mismatched:
+                raise BundleSelectionError(
+                    "The analyzed app's OBB folder contains unsupported or mismatched "
+                    f"files ({', '.join((*unsafe, *mismatched)[:3])})."
+                )
+
+        candidates = {
+            path.resolve()
+            for path in folder.glob("*.obb")
+            if path.is_file()
+            and (parsed := parse_obb_filename(path.name)) is not None
+            and parsed.package_name.casefold() == package_name.casefold()
+        }
+        candidates.update(
+            path.resolve()
+            for child in folder.iterdir()
+            if child.is_dir()
+            for path in child.glob("*.obb")
+            if path.is_file()
+            and (parsed := parse_obb_filename(path.name)) is not None
+            and parsed.package_name.casefold() == package_name.casefold()
+        )
+        if package_dir.is_dir():
+            candidates.update(
+                path.resolve()
+                for path in package_dir.glob("*.obb")
+                if path.is_file() and is_safe_preserved_obb(path.name)
+            )
+        candidates.update(
+            path
+            for path in bundle.obbs
+            if parse_obb_filename(path.name) is None
+            and is_safe_preserved_obb(path.name)
+        )
+        return replace(
+            bundle,
+            obbs=tuple(sorted(candidates)),
+            package_name=package_name,
+        )
+
+    def _bundle_for_apk(
+        self,
+        folder: Path,
+        apk: Path,
+        *,
+        exact_apk: bool,
+    ) -> BundleDraft:
         manifest = folder / "release.manifest"
         manifest_path = manifest if manifest.is_file() else None
         metadata = _release_metadata(manifest_path)
         package_name = metadata.get("Package Name", "").strip()
 
-        obbs: list[Path] = []
+        obbs: tuple[Path, ...] = ()
         if package_name:
             package_obb_dir = folder / package_name
             if package_obb_dir.is_dir():
-                obbs.extend(package_obb_dir.glob("*.obb"))
-        if not obbs:
-            obbs.extend(folder.glob("*.obb"))
-            for child in folder.iterdir():
-                if child.is_dir():
-                    obbs.extend(child.glob("*.obb"))
+                package_obbs = tuple(
+                    sorted(path.resolve() for path in package_obb_dir.glob("*.obb"))
+                )
+                unsafe = tuple(
+                    path.name
+                    for path in package_obbs
+                    if not is_safe_preserved_obb(path.name)
+                )
+                mismatched = tuple(
+                    path.name
+                    for path in package_obbs
+                    if (obb_package := _obb_package(path))
+                    and obb_package.casefold() != package_name.casefold()
+                )
+                if unsafe or mismatched:
+                    names = ", ".join((*unsafe, *mismatched)[:3])
+                    raise BundleSelectionError(
+                        f"The package OBB folder contains unsupported files ({names})."
+                    )
+                obbs = package_obbs
+            else:
+                obbs = tuple(
+                    sorted(
+                        path.resolve()
+                        for path in folder.glob("*.obb")
+                        if _obb_package(path).casefold() == package_name.casefold()
+                    )
+                )
+        else:
+            apks = tuple(path for path in folder.glob("*.apk") if path.is_file())
+            # An exact APK in a mixed download folder has no trustworthy way to
+            # identify which neighboring expansion files belong to it.
+            if not exact_apk or len(apks) == 1:
+                candidates = tuple(
+                    sorted(
+                        {
+                            path.resolve()
+                            for path in folder.glob("*.obb")
+                            if path.is_file()
+                        }
+                        | {
+                            path.resolve()
+                            for child in folder.iterdir()
+                            if child.is_dir()
+                            for path in child.glob("*.obb")
+                            if path.is_file()
+                        }
+                    )
+                )
+                unsafe = tuple(
+                    path.name
+                    for path in candidates
+                    if not is_safe_preserved_obb(path.name)
+                )
+                packages = {_obb_package(path).casefold() for path in candidates}
+                packages.discard("")
+                if unsafe:
+                    names = ", ".join(unsafe[:3])
+                    raise BundleSelectionError(
+                        f"Expansion files use unsupported names ({names})."
+                    )
+                if len(packages) > 1:
+                    raise BundleSelectionError(
+                        "This folder contains OBB files for multiple packages. "
+                        "Choose one complete game folder."
+                    )
+                obbs = candidates
 
         return BundleDraft(
             root=folder,
             apk=apk,
-            obbs=tuple(sorted(set(path.resolve() for path in obbs))),
+            obbs=obbs,
             manifest=manifest_path,
             game_name=metadata.get("Game Name", "").strip() or folder.name,
             package_name=package_name,

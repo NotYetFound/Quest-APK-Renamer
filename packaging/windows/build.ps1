@@ -6,7 +6,7 @@ $ProjectDir = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $VenvDir = Join-Path $PSScriptRoot ".venv"
 $Python = Join-Path $VenvDir "Scripts\python.exe"
 if (-not (Test-Path $Python)) { python -m venv $VenvDir }
-& $Python -m pip install --upgrade pip
+& $Python -m pip install "pip==26.2.1"
 & $Python -m pip install -r (Join-Path $ProjectDir "packaging\requirements-build.txt") -e $ProjectDir
 if ($LASTEXITCODE -ne 0) { throw "Build dependency installation failed." }
 if (-not $SkipBootstrap) {

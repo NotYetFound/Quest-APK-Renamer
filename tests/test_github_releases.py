@@ -4,12 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import ClassVar
+from unittest.mock import patch
 from urllib.error import URLError
 from urllib.request import Request
 
 from quest_renamer.infrastructure.github_releases import (
     GitHubReleaseChecker,
     UpdateChannel,
+    _default_open,
     load_update_channel,
 )
 
@@ -31,7 +33,14 @@ class GitHubReleaseCheckerTests(unittest.TestCase):
         root = Path(__file__).parents[1] / "src" / "quest_renamer"
         channel = load_update_channel(root / "resources" / "update-channel.json")
         self.assertEqual(channel.tag_prefix, "v")
-        self.assertTrue(channel.releases_api.startswith("https://api.github.com/"))
+        self.assertIn(
+            "/repos/NotYetFound/Quest-APK-Renamer/",
+            channel.releases_api,
+        )
+        self.assertEqual(
+            channel.releases_page,
+            "https://github.com/NotYetFound/Quest-APK-Renamer/releases",
+        )
 
     def test_release_check_includes_preview_on_the_full_channel(self) -> None:
         payload = [
@@ -57,6 +66,20 @@ class GitHubReleaseCheckerTests(unittest.TestCase):
 
         self.assertTrue(result.has_update)
         self.assertEqual(result.latest.tag if result.latest else "", "v1.5.0-beta.1")
+
+    def test_default_opener_uses_a_populated_certificate_context(self) -> None:
+        response = FakeResponse(b"[]")
+        with patch(
+            "quest_renamer.infrastructure.trusted_https.urlopen",
+            return_value=response,
+        ) as opened:
+            returned = _default_open(Request(self.channel.releases_api), 4.0)
+
+        self.assertIs(returned, response)
+        self.assertEqual(opened.call_args.kwargs["timeout"], 4.0)
+        context = opened.call_args.kwargs["context"]
+        self.assertTrue(context.check_hostname)
+        self.assertGreater(len(context.get_ca_certs()), 0)
 
     def test_tag_api_is_used_when_release_api_fails(self) -> None:
         calls: list[str] = []

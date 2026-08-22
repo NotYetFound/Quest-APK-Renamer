@@ -17,13 +17,17 @@ from quest_renamer.domain.signers import (
     describe_previous_signer,
     rename_signature_text,
 )
+from quest_renamer.infrastructure.app_icons import (
+    cache_decoded_app_icon,
+    decoded_app_label,
+)
 from quest_renamer.infrastructure.build_recovery import (
     clear_build_recovery,
     write_build_recovery,
 )
 from quest_renamer.infrastructure.bundle_output import (
     copy_file,
-    obb_destination,
+    obb_destinations,
     write_build_report,
     write_release_manifest,
 )
@@ -171,6 +175,12 @@ class StagedApkBuildEngine:
                 )
         elif output.exists() and (not output.is_dir() or any(output.iterdir())):
             raise BuildError("The output folder already exists and is not empty.")
+        try:
+            planned_obbs = (
+                obb_destinations(request, output) if request.copy_obbs else ()
+            )
+        except ValueError as exc:
+            raise BuildError(str(exc)) from exc
         output.parent.mkdir(parents=True, exist_ok=True)
         self.cache_root.mkdir(parents=True, exist_ok=True)
         framework = self.cache_root / "apktool-framework"
@@ -186,6 +196,8 @@ class StagedApkBuildEngine:
                 output=output,
             )
         published = False
+        app_label = ""
+        app_icon: Path | None = None
         log(f"Staging output beside its final destination: {staging.name}")
 
         try:
@@ -215,6 +227,7 @@ class StagedApkBuildEngine:
                     token=token,
                     log=log,
                 )
+                app_label = decoded_app_label(decoded)
                 if request.package_name == request.source.package_name:
                     if PATCH_ID not in request.patches:
                         raise BuildError(
@@ -371,8 +384,11 @@ class StagedApkBuildEngine:
                 if request.copy_obbs and request.source.obbs:
                     total_bytes = sum(path.stat().st_size for path in request.source.obbs)
                     completed = 0
-                    for index, source_obb in enumerate(request.source.obbs, start=1):
-                        destination = obb_destination(source_obb, request, staging)
+                    for index, (source_obb, planned) in enumerate(
+                        zip(request.source.obbs, planned_obbs, strict=True),
+                        start=1,
+                    ):
+                        destination = staging / planned.relative_to(output)
                         base = completed
 
                         def report_copy(
@@ -411,6 +427,11 @@ class StagedApkBuildEngine:
                     tuple(obb_outputs),
                     rewrite,
                     token=token,
+                )
+                app_icon = cache_decoded_app_icon(
+                    decoded,
+                    app_label or request.source.game_name,
+                    self.signing_root / "app-icons",
                 )
                 token.raise_if_cancelled()
 
@@ -451,6 +472,8 @@ class StagedApkBuildEngine:
                     if signing_identity
                     else ""
                 ),
+                app_label,
+                app_icon,
             )
         except OperationCancelled:
             partial = staging if any(staging.iterdir()) else None

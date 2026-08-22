@@ -1,11 +1,14 @@
 import sys
+import tempfile
 import threading
 import time
 import unittest
+from pathlib import Path
 
 from quest_renamer.infrastructure.process_runner import (
     CancellationToken,
     CommandFailed,
+    CommandTimedOut,
     OperationCancelled,
     ProcessRunner,
 )
@@ -54,6 +57,34 @@ class ProcessRunnerTests(unittest.TestCase):
                 token=token,
             )
         self.assertLess(time.monotonic() - started, 3)
+
+    def test_deadline_terminates_a_running_process(self) -> None:
+        started = time.monotonic()
+        with self.assertRaises(CommandTimedOut) as raised:
+            ProcessRunner().run(
+                [sys.executable, "-c", "import time; time.sleep(10)"],
+                timeout=0.15,
+            )
+        self.assertEqual(raised.exception.timeout, 0.15)
+        self.assertLess(time.monotonic() - started, 3)
+
+    @unittest.skipIf(sys.platform.startswith("win"), "Unix process-group regression test")
+    def test_deadline_terminates_child_processes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            marker = f"{temporary}/child-finished"
+            child = "import pathlib,time,sys; time.sleep(.6); pathlib.Path(sys.argv[1]).touch()"
+            parent = (
+                "import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}, sys.argv[1]]); "
+                "time.sleep(10)"
+            )
+            with self.assertRaises(CommandTimedOut):
+                ProcessRunner().run(
+                    [sys.executable, "-c", parent, marker],
+                    timeout=0.15,
+                )
+            time.sleep(0.7)
+            self.assertFalse(Path(marker).exists())
 
 
 if __name__ == "__main__":

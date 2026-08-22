@@ -2,4 +2,8 @@
 set -eu
 
 app_dir="${APPDIR:-$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)}"
+bundled_ca="$app_dir/usr/lib/quest-apk-renamer/_internal/certifi/cacert.pem"
+if [ -f "$bundled_ca" ] && [ -z "${SSL_CERT_FILE:-}" ]; then
+    export SSL_CERT_FILE="$bundled_ca"
+fi
 exec "$app_dir/usr/lib/quest-apk-renamer/Quest APK Renamer" "$@"

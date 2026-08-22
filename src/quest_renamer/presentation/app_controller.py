@@ -224,7 +224,9 @@ class AppController(QObject):
         self._retry_bundle: BundleDraft | None = None
         self._pending_conflict_bundle: BundleDraft | None = None
         self._pending_library_profile_id = ""
+        self._pending_library_package = ""
         self._matched_library_profile_id = ""
+        self._direct_library_update_package = ""
         self._pending_restore: Path | None = None
         self._automatic_signing_backup = False
         self._pending_old_output: ManagedOutput | None = None
@@ -269,6 +271,8 @@ class AppController(QObject):
         return self._can_build()
 
     def _can_build(self) -> bool:
+        if self._direct_library_update_package:
+            return self._can_install_direct_library_update()
         if (
             self._build_state == "running"
             or self._install_state == "running"
@@ -292,6 +296,21 @@ class AppController(QObject):
             and failures[0].key == "output"
             and failures[0].detail
             == "The output folder already exists and is not empty."
+        )
+
+    def _can_install_direct_library_update(self) -> bool:
+        return bool(
+            self._bundle is not None
+            and self._bundle_installer is not None
+            and self._device.connected
+            and self._device.serial
+            and self._analysis_state == "ready"
+            and self._package_id == self._direct_library_update_package
+            and self._bundle.package_name == self._direct_library_update_package
+            and self._build_state != "running"
+            and self._install_state == "idle"
+            and not self._signing_busy
+            and not self._external_busy_provider()
         )
 
     @Property(bool, notify=readinessChanged)
@@ -402,6 +421,8 @@ class AppController(QObject):
     def buildLabel(self) -> str:
         if self._build_message:
             return self._build_message
+        if self._direct_library_update_package:
+            return "Installing selected update"
         if self._patch_only_build():
             return "Applying older-firmware patch"
         if self._settings.replace_source_after_build:
@@ -414,6 +435,8 @@ class AppController(QObject):
             return "Cancel safely"
         if self._build_result is not None:
             return "Open finished folder"
+        if self._direct_library_update_package:
+            return "Update installed" if self._install_state == "complete" else "Install update"
         if self._patch_only_build():
             return (
                 "Apply patch and replace source"
@@ -501,15 +524,31 @@ class AppController(QObject):
 
     @Property(str, notify=bundleChanged)
     def libraryMatch(self) -> str:
+        if self._direct_library_update_package:
+            version = (
+                self._library_controller.installed_version(
+                    self._direct_library_update_package
+                )
+                if self._library_controller is not None
+                else ""
+            )
+            current = self._bundle.version_code if self._bundle else ""
+            if version and current:
+                return f"Quest update  •  {version} → {current}"
+            return "Direct update for the selected Quest app"
         if self._library_controller is None or not self._matched_library_profile_id:
             return ""
         profile = self._library_controller.profile(self._matched_library_profile_id)
         if profile is None:
             return ""
-        version = profile.installed_version or profile.source_version
+        version = self._library_controller.installed_version(profile.target_package)
         if self._bundle and self._bundle.version_code and version:
-            return f"Library update  •  {version} → {self._bundle.version_code}"
-        return "Library identity restored automatically"
+            return f"Saved signing identity  •  Quest {version} → {self._bundle.version_code}"
+        return "Saved signing identity restored automatically"
+
+    @Property(bool, notify=readinessChanged)
+    def isDirectLibraryUpdate(self) -> bool:
+        return bool(self._direct_library_update_package)
 
     @Property(str, notify=outputChanged)
     def outputFolder(self) -> str:
@@ -615,31 +654,58 @@ class AppController(QObject):
         return package_id_error(
             self._package_id,
             self._bundle.package_name if self._bundle else "",
-            allow_same=self._patch_only_build(),
+            allow_same=bool(
+                self._patch_only_build() or self._direct_library_update_package
+            ),
         )
 
     def _library_identity_error(self) -> str:
+        if self._direct_library_update_package:
+            if self._bundle is None:
+                return "Choose an update APK or folder."
+            if self._bundle.package_name != self._direct_library_update_package:
+                return (
+                    "The selected update does not match the app chosen from the Quest."
+                )
+            installed = (
+                self._library_controller.installed_version(
+                    self._direct_library_update_package
+                )
+                if self._library_controller is not None
+                else ""
+            )
+            if (
+                installed.isdigit()
+                and self._bundle.version_code.isdigit()
+                and int(self._bundle.version_code) < int(installed)
+            ):
+                return (
+                    f"Version {self._bundle.version_code} is older than the installed "
+                    f"version {installed}."
+                )
+            return ""
         if self._library_controller is None or not self._matched_library_profile_id:
             return ""
         profile = self._library_controller.profile(self._matched_library_profile_id)
         if profile is None or profile.target_package != self._package_id:
             return ""
-        if profile.installed_version and not self._settings.sign_apks:
-            return "Enable APK signing to update this installed Library game."
+        installed_version = self._library_controller.installed_version(
+            profile.target_package
+        )
+        if not self._settings.sign_apks:
+            return "Enable APK signing to reuse this saved signing identity."
         if (
             self._bundle is not None
-            and profile.installed_version.isdigit()
+            and installed_version.isdigit()
             and self._bundle.version_code.isdigit()
-            and int(self._bundle.version_code) < int(profile.installed_version)
+            and int(self._bundle.version_code) < int(installed_version)
         ):
             return (
-                f"Version {self._bundle.version_code} is older than the installed Library "
-                f"version {profile.installed_version}."
+                f"Version {self._bundle.version_code} is older than the installed Quest "
+                f"version {installed_version}."
             )
-        if profile.installed_version and not (
-            profile.signing_keystore and profile.signing_metadata
-        ):
-            return "This Library entry has no saved signing key, so it cannot be updated."
+        if not (profile.signing_keystore and profile.signing_metadata):
+            return "This saved identity has no signing key. Choose another app ID."
         if profile.signing_keystore and profile.signing_metadata and not profile.key_available:
             return "The saved signing key is missing or changed. Restore it before updating."
         return ""
@@ -832,6 +898,12 @@ class AppController(QObject):
     def recordActivity(self, message: str) -> None:
         self._record_activity(message)
 
+    def report_startup_warning(self, message: str) -> None:
+        if not message:
+            return
+        self._set_notice(message, "warning")
+        self._record_event("RECOVERY", "User state needed recovery", (("Detail", message),))
+
     @Slot()
     def startDeviceMonitoring(self) -> None:
         self.refreshDevice()
@@ -857,6 +929,8 @@ class AppController(QObject):
         current = (snapshot.status, snapshot.serial, snapshot.free_bytes)
         self._device = snapshot
         self.deviceChanged.emit()
+        if self._library_controller is not None:
+            self._library_controller.setDevice(snapshot)
         self._refresh_preflight()
         if current != previous:
             self._record_activity(f"Device: {self._device_title()}. {snapshot.detail}")
@@ -1174,26 +1248,37 @@ class AppController(QObject):
             self.chooseFolder(QUrl.fromLocalFile(value))
 
     @Slot(str)
-    def prepareLibraryUpdate(self, profile_id: str) -> None:
+    def prepareLibraryUpdate(self, entry_id: str) -> None:
         if self._library_controller is None:
             return
-        profile = self._library_controller.profile(profile_id)
-        if profile is None:
-            self._set_notice("That Library entry is no longer available.", "warning")
+        app = self._library_controller.installed_app(entry_id)
+        if app is None:
+            self._pending_library_profile_id = ""
+            self._pending_library_package = ""
+            self._set_notice(
+                "Choose an app from Installed on headset before selecting its update.",
+                "warning",
+            )
             return
-        self._pending_library_profile_id = profile.id
-        self._library_controller.select(profile.id)
+        profile = self._library_controller.profile_for_installed(app.package_name)
+        self._pending_library_package = app.package_name
+        self._pending_library_profile_id = profile.id if profile is not None else ""
+        self._library_controller.select(app.package_name)
 
     @Slot(QUrl)
     def chooseLibraryUpdate(self, url: QUrl) -> None:
-        if not self._pending_library_profile_id:
-            self._set_notice("Choose a game from the Library first.", "warning")
+        if not self._pending_library_package:
+            self._set_notice(
+                "Choose an app from Installed on headset before selecting its update.",
+                "warning",
+            )
             return
         self.chooseFolder(url)
 
     @Slot()
     def cancelLibraryUpdateSelection(self) -> None:
         self._pending_library_profile_id = ""
+        self._pending_library_package = ""
 
     @Slot(QUrl)
     def chooseOutputParent(self, url: QUrl) -> None:
@@ -1247,11 +1332,15 @@ class AppController(QObject):
         self._preflight = None
         self._build_result = None
         self._build_state = "idle"
+        self._install_state = "idle"
+        self._install_progress = 0.0
+        self._install_message = ""
         self._output_parent = bundle.root.parent
         self._output_override = None
         self._pending_output_conflict = None
         self._older_firmware_supported = False
         self._matched_library_profile_id = ""
+        self._direct_library_update_package = ""
         if bundle.package_name:
             try:
                 self._package_id = with_tag(bundle.package_name, "dev")
@@ -1363,12 +1452,32 @@ class AppController(QObject):
             return
 
         result = raw_outcome.result
+        try:
+            analyzed_bundle = self._inspector.apply_apk_identity(
+                self._bundle,
+                result.package_name,
+            )
+        except BundleSelectionError as exc:
+            self._analysis_state = "error"
+            self._analysis_progress = 0.0
+            self._set_notice(str(exc), "error")
+            self._record_event(
+                "ANALYSIS",
+                "Expansion-file matching failed",
+                (("Package", result.package_name), ("Reason", str(exc))),
+            )
+            self.readinessChanged.emit()
+            return
         self._older_firmware_supported = result.has_legacy_loader
         self._bundle = replace(
-            self._bundle,
+            analyzed_bundle,
             package_name=result.package_name,
             version_code=result.version_code,
-            game_name=self._bundle.game_name or result.app_label,
+            game_name=(
+                result.app_label
+                if result.app_label and not result.app_label.startswith("@")
+                else self._bundle.game_name
+            ),
             signer_identity=result.signer_identity,
             signer_lineage=result.signer_lineage,
         )
@@ -1409,11 +1518,51 @@ class AppController(QObject):
         library = self._library_controller
         if library is None or not original_package:
             self._pending_library_profile_id = ""
+            self._pending_library_package = ""
             return False
         requested = library.profile(self._pending_library_profile_id)
+        requested_package = self._pending_library_package
         self._pending_library_profile_id = ""
+        self._pending_library_package = ""
+        if requested_package and requested is None:
+            if original_package != requested_package:
+                self._matched_library_profile_id = ""
+                self._direct_library_update_package = requested_package
+                self._set_notice(
+                    "That APK belongs to a different app than the one selected on the "
+                    "Quest.",
+                    "error",
+                )
+                self._record_event(
+                    "LIBRARY",
+                    "Direct update package did not match",
+                    (("Expected", requested_package), ("Selected", original_package)),
+                )
+                return True
+            self._matched_library_profile_id = ""
+            self._direct_library_update_package = requested_package
+            self._package_id = requested_package
+            installed = library.installed_version(requested_package)
+            current = self._bundle.version_code if self._bundle else ""
+            detail = f" {installed} → {current}." if installed and current else "."
+            self._set_notice(
+                "Update matched the selected Quest app; it will be installed with its "
+                "original signature" + detail,
+                "success",
+            )
+            self._record_event(
+                "LIBRARY",
+                "Direct Quest app update matched",
+                (
+                    ("Package", requested_package),
+                    ("Installed version", installed or "Not reported"),
+                    ("Selected version", current or "Not reported"),
+                ),
+            )
+            return True
         if requested is not None and requested.original_package != original_package:
             self._matched_library_profile_id = ""
+            self._direct_library_update_package = ""
             self._set_notice(
                 "That update belongs to a different game, so the saved identity was not used.",
                 "error",
@@ -1441,6 +1590,7 @@ class AppController(QObject):
             profile.source_signer_id,
         }:
             self._matched_library_profile_id = ""
+            self._direct_library_update_package = ""
             self._set_notice(
                 "The update package uses a different original signer, so the saved "
                 "identity was not used.",
@@ -1456,16 +1606,17 @@ class AppController(QObject):
             )
             return True
         self._matched_library_profile_id = profile.id
+        self._direct_library_update_package = ""
         self._package_id = profile.target_package
         if profile.output_path and not self._settings.replace_source_after_build:
             self._output_parent = Path(profile.output_path).expanduser().parent
             self._output_override = None
         library.select(profile.id)
         current = self._bundle.version_code if self._bundle else ""
-        previous = profile.installed_version or profile.source_version
-        detail = f" {previous} → {current}." if previous and current else "."
+        previous = library.installed_version(profile.target_package)
+        detail = f" Quest {previous} → {current}." if previous and current else "."
         self._set_notice(
-            "Library match found; the saved app ID and signing identity will be reused"
+            "Saved app ID and signing identity restored automatically"
             + detail,
             "success",
         )
@@ -1476,7 +1627,7 @@ class AppController(QObject):
                 ("Game", profile.game_name),
                 ("Original package", profile.original_package),
                 ("Renamed package", profile.target_package),
-                ("Saved version", previous or "Not reported"),
+                ("Installed Quest version", previous or "Not currently detected"),
                 ("Selected version", current or "Not reported"),
             ),
         )
@@ -1814,8 +1965,9 @@ class AppController(QObject):
                         self._device.serial,
                         original_package=original_package,
                     )
-                    self._matched_library_profile_id = profile.id
-                    self.bundleChanged.emit()
+                    if profile is not None:
+                        self._matched_library_profile_id = profile.id
+                        self.bundleChanged.emit()
                 except OSError as exc:
                     self._record_event(
                         "LIBRARY",
@@ -1938,6 +2090,8 @@ class AppController(QObject):
                 self.signingBackupCompletedRequested.emit(str(destination))
             return
         assert raw_outcome.restore is not None
+        if self._library_controller is not None:
+            self._library_controller.refreshKeyHealth()
         recovery = raw_outcome.restore.recovery
         message = "Signing identity restored and ready for future builds."
         if recovery is not None:
@@ -2022,6 +2176,13 @@ class AppController(QObject):
         self.readinessChanged.emit()
 
     def _refresh_preflight(self, *, preserve_notice: bool = False) -> None:
+        if self._direct_library_update_package:
+            self._preflight = None
+            library_error = self._library_identity_error()
+            if library_error:
+                self._set_notice(library_error, "warning")
+            self.readinessChanged.emit()
+            return
         request = self._build_request()
         library_error = self._library_identity_error()
         if library_error:
@@ -2071,6 +2232,17 @@ class AppController(QObject):
             return
         if self._build_result is not None:
             self._open_local_path(self._build_result.output_root, "finished folder")
+            return
+        if self._direct_library_update_package:
+            if not self._can_install_direct_library_update():
+                self._set_notice(
+                    self._library_identity_error()
+                    or "Connect and authorize one Quest before installing the update.",
+                    "warning",
+                )
+                return
+            assert self._bundle is not None
+            self._start_bundle_install(self._bundle)
             return
         conflict = self._output_conflict()
         if conflict is not None and self._can_build():
@@ -2428,8 +2600,14 @@ class AppController(QObject):
             self._install_token = None
         self._install_generation += 1
         self._install_state = "idle"
+        self._install_progress = 0.0
+        self._install_message = ""
         self._retry_bundle = None
         self._pending_conflict_bundle = None
+        self._pending_library_profile_id = ""
+        self._pending_library_package = ""
+        self._matched_library_profile_id = ""
+        self._direct_library_update_package = ""
         self._pending_restore = None
         self.bundleChanged.emit()
         self.packageIdChanged.emit()

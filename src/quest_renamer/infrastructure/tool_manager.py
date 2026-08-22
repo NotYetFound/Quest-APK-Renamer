@@ -11,10 +11,11 @@ from contextlib import closing, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Protocol, cast
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from quest_renamer.domain.operations import CancellationToken
 from quest_renamer.infrastructure.toolchain import ToolArtifact, load_tool_catalog
+from quest_renamer.infrastructure.trusted_https import trusted_urlopen
 
 ProgressCallback = Callable[[float, str], None]
 LogCallback = Callable[[str], None]
@@ -60,7 +61,7 @@ class ToolRepairResult:
 
 
 def _default_open(request: Request, timeout: float) -> DownloadResponse:
-    return cast(DownloadResponse, urlopen(request, timeout=timeout))
+    return cast(DownloadResponse, trusted_urlopen(request, timeout))
 
 
 class PinnedToolManager:

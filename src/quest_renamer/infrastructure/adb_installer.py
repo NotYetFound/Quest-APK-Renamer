@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import uuid
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +17,7 @@ from quest_renamer.domain.installation import (
     InstalledPackageConflict,
 )
 from quest_renamer.domain.models import BundleDraft
+from quest_renamer.domain.obb_names import parse_obb_filename
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
 from quest_renamer.domain.package_ids import is_valid_package_id
 from quest_renamer.infrastructure.adb_device import find_adb
@@ -41,6 +44,8 @@ class _PreparedObb:
 
 
 class AdbApkInstaller:
+    _MAX_LOCAL_HASHES = 32
+
     def __init__(
         self,
         *,
@@ -51,6 +56,7 @@ class AdbApkInstaller:
         self.resource_root = resource_root
         self.executable = executable
         self.runner = runner or ProcessRunner()
+        self._local_hashes: OrderedDict[tuple[Path, int, int], str] = OrderedDict()
 
     def install_bundle(
         self,
@@ -75,7 +81,6 @@ class AdbApkInstaller:
             raise InstalledPackageConflict(bundle.package_name)
         prepared = self._prepare_obb_sync(bundle, target, token, progress, log)
         activated = False
-        apk_installed = False
         try:
             self._activate_prepared_obbs(prepared, target, token, log)
             activated = True
@@ -90,14 +95,14 @@ class AdbApkInstaller:
                 raise BundleInstallError(
                     "ADB finished without confirming a successful APK install."
                 )
-            apk_installed = True
             progress(0.86, "APK installed • verifying package and OBB files")
             self._verify_prepared_obbs(prepared, target, token, log)
             self._verify_package(bundle.package_name, target, token, progress, log)
             self._finish_obb_sync(bundle, prepared, target, token, log)
             progress(1.0, "Install verified")
         except Exception:
-            if activated and not apk_installed:
+            if activated:
+                log("Install verification failed; restoring the previous OBB set.")
                 self._rollback_prepared_obbs(prepared, target, log)
             else:
                 self._remove_staged_obbs(prepared, target, log)
@@ -192,6 +197,7 @@ class AdbApkInstaller:
         log: Callable[[str], None],
     ) -> tuple[_PreparedObb, ...]:
         remote_root = f"/sdcard/Android/obb/{bundle.package_name}"
+        transaction_id = uuid.uuid4().hex[:12]
         if not bundle.obbs:
             return ()
         token.raise_if_cancelled()
@@ -243,12 +249,12 @@ class AdbApkInstaller:
                         size,
                         "renamed on Quest",
                         reused_path=reusable.path,
-                        backup_path=f"{remote_path}.qar-old-{index}",
+                        backup_path=f"{remote_path}.qar-old-{transaction_id}-{index}",
                     )
                 )
                 continue
 
-            staged = f"{remote_root}/.qar-new-{index}-{obb.name}"
+            staged = f"{remote_root}/.qar-new-{transaction_id}-{index}-{obb.name}"
             progress(
                 0.12 + ((index - 1) / len(bundle.obbs)) * 0.46,
                 self._copy_label(index, len(bundle.obbs), obb.name, size),
@@ -281,7 +287,7 @@ class AdbApkInstaller:
                     local_size,
                     "uploaded",
                     staged_path=staged,
-                    backup_path=f"{remote_path}.qar-old-{index}",
+                    backup_path=f"{remote_path}.qar-old-{transaction_id}-{index}",
                 )
             )
         progress(0.62, "OBB set prepared safely")
@@ -302,7 +308,9 @@ class AdbApkInstaller:
         for raw in result.output:
             name = raw.strip()
             if name.startswith(".qar-new-") and re.fullmatch(
-                r"\.qar-new-\d+-[A-Za-z0-9._-]+\.obb", name, re.IGNORECASE
+                r"\.qar-new-[0-9a-f]{12}-\d+-[A-Za-z0-9._-]+\.obb",
+                name,
+                re.IGNORECASE,
             ):
                 self._remove_remote(target, f"{remote_root}/{name}", log)
 
@@ -374,15 +382,15 @@ class AdbApkInstaller:
                 self._remove_remote(target, item.backup_path, log)
         remote_root = f"/sdcard/Android/obb/{bundle.package_name}"
         remote = self._remote_obbs(target, remote_root, token, log)
-        stale_pattern = re.compile(
-            rf"^(?:main|patch)\.\d+\.{re.escape(bundle.package_name)}\.obb$",
-            re.IGNORECASE,
-        )
         previously_managed = set(bundle.managed_obb_names)
         for remote_item in remote.values():
+            parsed = parse_obb_filename(remote_item.name)
+            belongs_to_package = bool(
+                parsed is not None
+                and parsed.package_name.casefold() == bundle.package_name.casefold()
+            )
             if remote_item.name not in expected and (
-                stale_pattern.fullmatch(remote_item.name)
-                or remote_item.name in previously_managed
+                belongs_to_package or remote_item.name in previously_managed
             ):
                 log(
                     f"Removing obsolete versioned OBB after verified update: {remote_item.name}"
@@ -448,14 +456,24 @@ class AdbApkInstaller:
                 remote[name] = _RemoteObb(name, path, size)
         return remote
 
-    @staticmethod
-    def _local_sha256(path: Path, token: CancellationToken) -> str:
+    def _local_sha256(self, path: Path, token: CancellationToken) -> str:
+        stat = path.stat()
+        key = (path.resolve(), stat.st_size, stat.st_mtime_ns)
+        cached = self._local_hashes.get(key)
+        if cached is not None:
+            self._local_hashes.move_to_end(key)
+            return cached
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             while chunk := handle.read(8 * 1024 * 1024):
                 token.raise_if_cancelled()
                 digest.update(chunk)
-        return digest.hexdigest()
+        value = digest.hexdigest()
+        self._local_hashes[key] = value
+        self._local_hashes.move_to_end(key)
+        while len(self._local_hashes) > self._MAX_LOCAL_HASHES:
+            self._local_hashes.popitem(last=False)
+        return value
 
     def _remote_sha256(
         self,

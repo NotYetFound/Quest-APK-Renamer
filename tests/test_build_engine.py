@@ -180,6 +180,38 @@ class BuildEngineTests(unittest.TestCase):
             with self.assertRaisesRegex(BuildError, "patch-only"):
                 self._engine(root).build(request)
 
+    def test_obb_collision_is_rejected_before_staging_begins(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            first_root = source / "first"
+            second_root = source / "second"
+            first_root.mkdir()
+            second_root.mkdir()
+            apk = source / "game.apk"
+            apk.write_bytes(b"original apk")
+            first = first_root / "main.42.com.example.game.obb"
+            second = second_root / "main.42.com.example.game.obb"
+            first.write_bytes(b"first")
+            second.write_bytes(b"second")
+            request = BuildRequest(
+                BundleDraft(
+                    source,
+                    apk,
+                    (first, second),
+                    package_name="com.example.game",
+                    version_code="42",
+                ),
+                "com.dev.example.game",
+                root / "finished",
+            )
+
+            with self.assertRaisesRegex(BuildError, "overwrite the same output"):
+                self._engine(root).build(request)
+
+            self.assertFalse(any(root.glob(".finished.staging-*")))
+
     def test_pipeline_replaces_source_only_after_build_and_trashes_original(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -22,8 +22,12 @@ Domain models          Infrastructure adapters
 - The dashboard and bulk queue use separate presentation controllers and share the same typed
   engine adapters. Their busy-state providers prevent both workspaces from starting expensive
   operations at the same time.
-- The Library controller presents automatically persisted game identities. The JSON store owns
-  atomic serialization; the main workflow only asks it to match, record, or retrieve profiles.
+- The Library controller presents the local signing-key vault separately from a generation-guarded
+  live headset inventory. The JSON store owns recoverable atomic serialization; the main workflow
+  only asks it to match, record, or retrieve profiles.
+- Library import/export runs off the UI thread. Portable archives are size-bounded, reject unsafe
+  paths, verify artifact hashes before activation, and copy imported private files into unique
+  local identity folders rather than trusting paths from another computer.
 - The detailed Inspector has its own controller and full-decode adapter. Normal Dashboard analysis
   remains manifest-only; deeper signature, resource, hash, and reference scans run only when the
   user opens the Inspector.
@@ -74,3 +78,16 @@ Domain models          Infrastructure adapters
 - Platform discovery is ordered: explicit override, bundled runtime, SDK locations, known tools,
   then `PATH`.
 - Every supported platform receives a packaged GUI smoke test, not only a source test.
+
+## Efficiency policy
+
+- QML-facing collections cache derived rows and use virtualized views; filesystem/key validation
+  runs when backing state changes rather than on every property read.
+- Device inventory avoids per-package ADB calls. Current firmware returns version codes in one
+  package-manager request, with one bulk `dumpsys` fallback for older firmware.
+- Large OBBs are streamed for hashing, and unchanged local hashes may be reused only while the
+  resolved path, byte size, and nanosecond modification time still match.
+- Nontechnical decoded APK files are scanned in bounded chunks. Technical files are loaded only
+  when they may actually be rewritten.
+- Frozen-package trimming is accepted only after the portable executable and AppImage both pass
+  the same offscreen QML launch test; native dialog, display, rendering, and image plugins remain.
