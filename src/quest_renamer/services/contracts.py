@@ -25,6 +25,11 @@ ProgressCallback = Callable[[float, str], None]
 class BundleInspector(Protocol):
     def inspect_folder(self, folder: Path) -> BundleDraft: ...
     def inspect_apk(self, apk: Path) -> BundleDraft: ...
+    def apply_apk_identity(
+        self,
+        bundle: BundleDraft,
+        package_name: str,
+    ) -> BundleDraft: ...
 
 
 class BulkBundleInspector(BundleInspector, Protocol):

@@ -212,11 +212,7 @@ def main() -> int:
     settings_store = JsonSettingsStore(paths.settings_file)
     activity_log = ActivityLog(paths.log_file)
     signing_root = paths.data / "signing"
-    library_controller = LibraryController(
-        GameLibraryStore(paths.library_file),
-        signing_root=signing_root,
-        parent=engine,
-    )
+    library_store = GameLibraryStore(paths.library_file)
 
     def log_migration(message: str) -> None:
         activity_log.append(message)
@@ -242,6 +238,12 @@ def main() -> int:
     device_service = AdbDeviceService(
         resource_root=package_root,
         executable=Path(sys.executable),
+    )
+    library_controller = LibraryController(
+        library_store,
+        signing_root=signing_root,
+        installed_apps=device_service.installed_apps,
+        parent=engine,
     )
     installer = AdbApkInstaller(
         resource_root=package_root,
@@ -279,6 +281,8 @@ def main() -> int:
         library_controller=library_controller,
         parent=engine,
     )
+    for warning in (settings_store.warning, library_store.warning):
+        controller.report_startup_warning(warning)
     detailed_inspector = FullDecodeApkInspector(
         toolchain,
         signer_registry=package_root / "resources" / "known-signers.json",

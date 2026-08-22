@@ -6,7 +6,6 @@ import csv
 import datetime as dt
 import hashlib
 import json
-import re
 import shutil
 from collections.abc import Callable
 from pathlib import Path
@@ -14,9 +13,8 @@ from pathlib import Path
 from quest_renamer import __version__
 from quest_renamer.domain.build import PackageRewriteReport
 from quest_renamer.domain.models import BuildRequest
+from quest_renamer.domain.obb_names import renamed_obb_filenames
 from quest_renamer.domain.operations import CancellationToken
-
-OBB_NAME = re.compile(r"^(main|patch)\.(\d+)\.(.+)\.obb$", re.IGNORECASE)
 
 
 def copy_file(
@@ -40,10 +38,21 @@ def copy_file(
 
 
 def obb_destination(source: Path, request: BuildRequest, output_root: Path) -> Path:
-    match = OBB_NAME.match(source.name)
-    kind = match.group(1).lower() if match else "main"
-    version = request.source.version_code or (match.group(2) if match else "1")
-    return output_root / request.package_name / f"{kind}.{version}.{request.package_name}.obb"
+    name = renamed_obb_filenames(
+        (source,),
+        source_package=request.source.package_name,
+        target_package=request.package_name,
+    )[0]
+    return output_root / request.package_name / name
+
+
+def obb_destinations(request: BuildRequest, output_root: Path) -> tuple[Path, ...]:
+    names = renamed_obb_filenames(
+        request.source.obbs,
+        source_package=request.source.package_name,
+        target_package=request.package_name,
+    )
+    return tuple(output_root / request.package_name / name for name in names)
 
 
 def write_release_manifest(

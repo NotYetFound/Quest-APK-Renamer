@@ -11,7 +11,7 @@ skip_bootstrap=0
 [[ "$(uname -s)" == "Linux" && "$(uname -m)" == "x86_64" ]] || { echo "Build on Linux x86_64." >&2; exit 1; }
 
 [[ -x "$python_bin" ]] || python3 -m venv "$venv_dir"
-"$python_bin" -m pip install --upgrade pip
+"$python_bin" -m pip install "pip==26.2.1"
 "$python_bin" -m pip install -r "$project_dir/packaging/requirements-build.txt" -e "$project_dir"
 if [[ "$skip_bootstrap" -eq 0 ]]; then
     PYTHON_BIN="$python_bin" "$script_dir/bootstrap-dependencies.sh"
@@ -37,6 +37,11 @@ cd "$project_dir"
 QAR_PACKAGE_RUNTIME="$runtime_dir" QAR_PACKAGE_ICON="$icon_dir/app-icon-1024.png" APP_VERSION="$app_version" \
     "$python_bin" -m PyInstaller --noconfirm --clean packaging/quest-apk-renamer.spec
 app_dir="$project_dir/dist/Quest APK Renamer"
+bundled_ca="$app_dir/_internal/certifi/cacert.pem"
+[[ -f "$bundled_ca" ]] || {
+    echo "Frozen app is missing the CA certificate bundle required for update checks." >&2
+    exit 1
+}
 QT_QPA_PLATFORM=offscreen "$app_dir/Quest APK Renamer" --smoke-test
 
 package_name="Quest-APK-Renamer-${app_version}-Linux-x86_64"
@@ -103,7 +108,7 @@ chmod +x "$appimage_root/AppRun" \
 command -v desktop-file-validate >/dev/null 2>&1 && \
     desktop-file-validate "$appimage_root/io.github.questapkrenamer.app.desktop"
 ARCH=x86_64 VERSION="$app_version" "$appimage_tool" --appimage-extract-and-run \
-    --runtime-file "$appimage_runtime" "$appimage_root" "$appimage"
+    --no-appstream --runtime-file "$appimage_runtime" "$appimage_root" "$appimage"
 chmod +x "$appimage"
 QT_QPA_PLATFORM=offscreen "$appimage" --appimage-extract-and-run --smoke-test
 (cd "$project_dir/dist" && sha256sum "$(basename "$appimage")") > "$appimage.sha256"

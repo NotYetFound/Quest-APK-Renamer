@@ -39,6 +39,28 @@ class LegacyFilePickerTests(unittest.TestCase):
         self.assertIn("--confirm-overwrite", command)
         self.assertIn("--filename=/tmp/report.json", command)
 
+    def test_library_archive_commands_use_the_portable_archive_filter(self) -> None:
+        open_command = linux_picker_command(
+            "/usr/bin/kdialog",
+            "archive",
+            "Import Library",
+            PurePosixPath("/tmp"),
+        )
+        save_command = linux_picker_command(
+            "/usr/bin/zenity",
+            "save_archive",
+            "Export Library",
+            PurePosixPath("/tmp"),
+            "Library.qarlib",
+        )
+
+        self.assertIn("*.qarlib|Quest APK Renamer Library (*.qarlib)", open_command)
+        self.assertIn("--save", save_command)
+        self.assertIn(
+            "--file-filter=Quest APK Renamer Library | *.qarlib",
+            save_command,
+        )
+
     def test_desktop_picker_uses_clean_host_environment(self) -> None:
         received_environment: dict[str, str] = {}
 

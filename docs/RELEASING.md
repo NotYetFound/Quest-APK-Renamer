@@ -121,25 +121,25 @@ four platform artifacts without publishing a release. After those exact files
 pass the checks above, create the stable tag:
 
 ```bash
-git tag -a v1.4.4 -m "Quest APK Renamer 1.4.4"
-git push origin v1.4.4
+git tag -a v1.4.5 -m "Quest APK Renamer 1.4.5"
+git push origin v1.4.5
 ```
 
 The release workflows build:
 
-- `Quest-APK-Renamer-1.4.4-Windows-portable.zip`;
-- `Quest-APK-Renamer-1.4.4-Setup.exe`;
-- `Quest-APK-Renamer-1.4.4-macOS-arm64.dmg`;
-- `Quest-APK-Renamer-1.4.4-macOS-x86_64.dmg`;
-- `Quest-APK-Renamer-1.4.4-Linux-x86_64.tar.gz`; and
-- `Quest-APK-Renamer-1.4.4-x86_64.AppImage`.
+- `Quest-APK-Renamer-1.4.5-Windows-portable.zip`;
+- `Quest-APK-Renamer-1.4.5-Setup.exe`;
+- `Quest-APK-Renamer-1.4.5-macOS-arm64.dmg`;
+- `Quest-APK-Renamer-1.4.5-macOS-x86_64.dmg`;
+- `Quest-APK-Renamer-1.4.5-Linux-x86_64.tar.gz`; and
+- `Quest-APK-Renamer-1.4.5-x86_64.AppImage`.
 
 GitHub displays a copyable SHA-256 digest beside every uploaded release asset.
 
 A `v*` tag creates a GitHub release automatically. A tag may match the app
-version exactly or add a prerelease suffix. For example, app version `1.4.4`
-accepts `v1.4.4` or `v1.4.4-beta.1`. Tags containing a hyphen are marked as
-prereleases. Create the stable `v1.4.4` tag only after the candidate Windows,
+version exactly or add a prerelease suffix. For example, app version `1.4.5`
+accepts `v1.4.5` or `v1.4.5-beta.1`. Tags containing a hyphen are marked as
+prereleases. Create the stable `v1.4.5` tag only after the candidate Windows,
 macOS, and Linux packages pass their complete desktop and Quest smoke tests.
 
 ## 5. Before publishing

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from quest_renamer.domain.build import PackageRewriteReport
 from quest_renamer.domain.operations import CancellationToken
+from quest_renamer.infrastructure.reference_scanner import count_file_patterns
 
 MAX_SCAN_SIZE = 64 * 1024 * 1024
 
@@ -44,18 +45,37 @@ def replace_package_references(
         if not path.is_file() or path.is_symlink():
             continue
         relative = path.relative_to(decoded)
-        try:
-            if path.stat().st_size > MAX_SCAN_SIZE:
+        technical = _is_technical_file(relative)
+        data = b""
+        if technical:
+            try:
+                if path.stat().st_size > MAX_SCAN_SIZE:
+                    continue
+                data = path.read_bytes()
+            except OSError:
                 continue
-            data = path.read_bytes()
-        except OSError:
-            continue
-        dotted_count = data.count(old_dotted)
-        slashed_count = data.count(old_slashed) if old_slashed != old_dotted else 0
+            dotted_count = data.count(old_dotted)
+            slashed_count = data.count(old_slashed) if old_slashed != old_dotted else 0
+        else:
+            patterns = (
+                (old_dotted, old_slashed)
+                if old_slashed != old_dotted
+                else (old_dotted,)
+            )
+            counts = count_file_patterns(
+                path,
+                patterns,
+                token,
+                max_size=MAX_SCAN_SIZE,
+            )
+            if counts is None:
+                continue
+            dotted_count = counts[0]
+            slashed_count = counts[1] if len(counts) > 1 else 0
         occurrences = dotted_count + slashed_count
         if not occurrences:
             continue
-        if not _is_technical_file(relative):
+        if not technical:
             preserved.append(relative.as_posix())
             continue
         updated = data.replace(old_dotted, new_dotted)

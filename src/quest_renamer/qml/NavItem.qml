@@ -19,15 +19,19 @@ Button {
     Accessible.description: selected ? "Current page" : "Open page"
 
     contentItem: Row {
-        spacing: 11
-        IconImage {
-            width: 18
+        spacing: 9
+        Item {
+            width: 20
             height: 18
-            anchors.verticalCenter: parent.verticalCenter
-            source: control.iconSource
-            color: control.selected ? "#d7d7d7" : "#858585"
-            sourceSize.width: 16
-            sourceSize.height: 16
+            IconImage {
+                width: 16
+                height: 16
+                anchors.centerIn: parent
+                source: control.iconSource
+                color: control.selected ? "#d7d7d7" : "#858585"
+                sourceSize.width: 16
+                sourceSize.height: 16
+            }
         }
         Text {
             anchors.verticalCenter: parent.verticalCenter

@@ -78,13 +78,27 @@ a = Analysis(
     excludes=unused_qt_modules,
     noarchive=False,
 )
-# Qt's TIFF image plugin is not used by this application. On Linux it can add a
-# dependency on a distro-specific libtiff soname, so leave it out of every
-# package rather than weakening the otherwise self-contained bundle.
+
+
+def normalized_toc_name(entry):
+    return entry[0].replace("\\", "/")
+
+
+# Keep native desktop/dialog/rendering libraries and their Python bindings, but
+# remove development-only QML tooling. Qt translations are not loaded because
+# all application text is authored in English and native file dialogs get their
+# labels from the OS.
 a.binaries = TOC(
     entry
     for entry in a.binaries
-    if "/imageformats/libqtiff" not in entry[0].replace("\\", "/")
+    if "/imageformats/libqtiff" not in normalized_toc_name(entry)
+    and "/qmltooling/" not in normalized_toc_name(entry)
+)
+a.datas = TOC(
+    entry
+    for entry in a.datas
+    if "/Qt/translations/" not in normalized_toc_name(entry)
+    and not normalized_toc_name(entry).endswith((".qmltypes", "plugins.qmltypes"))
 )
 pyz = PYZ(a.pure)
 

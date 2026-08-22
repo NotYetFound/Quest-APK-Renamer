@@ -4,6 +4,7 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 project_dir="$(cd "$script_dir/../.." && pwd)"
 runtime_dir="$script_dir/runtime"
+lock_file="$project_dir/packaging/runtime-lock.json"
 python_bin="${PYTHON_BIN:-python3}"
 force=0
 
@@ -25,13 +26,21 @@ PYTHONPATH="$project_dir/src" "$python_bin" \
     "$project_dir/scripts/fetch_pinned_tools.py" "$runtime_dir" --project "$project_dir"
 
 java_dir="$runtime_dir/java"
+IFS=$'\t' read -r java_url java_sha java_version < <(
+    "$python_bin" "$project_dir/scripts/read_runtime_lock.py" \
+        "$lock_file" temurin linux-x86_64
+)
 if [[ "$force" -eq 1 || ! -x "$java_dir/bin/java" || ! -x "$java_dir/bin/keytool" ]]; then
     archive="$temp_dir/temurin.tar.gz"
     extracted="$temp_dir/temurin"
     linked="$temp_dir/java"
-    url="https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
     mkdir -p "$extracted"
-    curl --fail --location --retry 3 "$url" --output "$archive"
+    curl --fail --location --retry 3 "$java_url" --output "$archive"
+    actual_sha="$(sha256sum "$archive" | awk '{print $1}')"
+    [[ "$actual_sha" == "$java_sha" ]] || {
+        echo "Temurin SHA-256 mismatch; refusing to use the download." >&2
+        exit 1
+    }
     tar -xzf "$archive" -C "$extracted"
     jlink="$(find "$extracted" -type f -path '*/bin/jlink' -print -quit)"
     [[ -n "$jlink" ]] || { echo "Temurin did not contain jlink." >&2; exit 1; }
@@ -39,23 +48,32 @@ if [[ "$force" -eq 1 || ! -x "$java_dir/bin/java" || ! -x "$java_dir/bin/keytool
         --no-header-files --no-man-pages --compress=2 --output "$linked"
     rm -rf -- "$java_dir"
     mv "$linked" "$java_dir"
-    printf 'Temurin archive SHA256: %s\nTemurin source: %s\n' \
-        "$(sha256sum "$archive" | awk '{print $1}')" "$url" > "$runtime_dir/DEPENDENCY-HASHES.txt"
 fi
 
 platform_dir="$runtime_dir/platform-tools"
+IFS=$'\t' read -r platform_url platform_sha platform_version < <(
+    "$python_bin" "$project_dir/scripts/read_runtime_lock.py" \
+        "$lock_file" platform_tools linux-x86_64
+)
 if [[ "$force" -eq 1 || ! -x "$platform_dir/adb" ]]; then
     archive="$temp_dir/platform-tools.zip"
     extracted="$temp_dir/android"
-    url="https://dl.google.com/android/repository/platform-tools-latest-linux.zip"
-    curl --fail --location --retry 3 "$url" --output "$archive"
+    curl --fail --location --retry 3 "$platform_url" --output "$archive"
+    actual_sha="$(sha256sum "$archive" | awk '{print $1}')"
+    [[ "$actual_sha" == "$platform_sha" ]] || {
+        echo "Platform Tools SHA-256 mismatch; refusing to use the download." >&2
+        exit 1
+    }
     unzip -q "$archive" -d "$extracted"
     [[ -x "$extracted/platform-tools/adb" ]] || { echo "ADB was not found." >&2; exit 1; }
     rm -rf -- "$platform_dir"
     mv "$extracted/platform-tools" "$platform_dir"
-    printf 'Platform-Tools archive SHA256: %s\nPlatform-Tools source: %s\n' \
-        "$(sha256sum "$archive" | awk '{print $1}')" "$url" >> "$runtime_dir/DEPENDENCY-HASHES.txt"
 fi
+
+printf 'Temurin version: %s\nTemurin archive SHA256: %s\nTemurin source: %s\nPlatform-Tools version: %s\nPlatform-Tools archive SHA256: %s\nPlatform-Tools source: %s\n' \
+    "$java_version" "$java_sha" "$java_url" \
+    "$platform_version" "$platform_sha" "$platform_url" \
+    > "$runtime_dir/DEPENDENCY-HASHES.txt"
 
 "$java_dir/bin/java" -jar "$runtime_dir/tools/apktool.jar" --version
 "$java_dir/bin/java" -jar "$runtime_dir/tools/uber-apk-signer.jar" --help >/dev/null

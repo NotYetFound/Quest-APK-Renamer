@@ -9,13 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from quest_renamer.domain.releases import (
     ReleaseCheckResult,
     parse_release_version,
     select_latest_release,
 )
+from quest_renamer.infrastructure.trusted_https import trusted_urlopen
 
 
 class ReleaseResponse(Protocol):
@@ -37,7 +38,7 @@ class UpdateChannel:
 
 
 def _default_open(request: Request, timeout: float) -> ReleaseResponse:
-    return cast(ReleaseResponse, urlopen(request, timeout=timeout))
+    return cast(ReleaseResponse, trusted_urlopen(request, timeout))
 
 
 def load_update_channel(path: Path) -> UpdateChannel:

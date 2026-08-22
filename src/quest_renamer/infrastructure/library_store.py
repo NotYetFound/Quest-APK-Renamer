@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import os
-import stat
 from pathlib import Path
 
 from quest_renamer.domain.library import GameProfile
+from quest_renamer.infrastructure.json_state import RecoveringJsonFile
 
 
 class GameLibraryStore:
@@ -15,42 +13,40 @@ class GameLibraryStore:
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        self._state = RecoveringJsonFile(path, label="Game Library")
+
+    @property
+    def warning(self) -> str:
+        return self._state.warning
+
+    @property
+    def recovery_path(self) -> Path | None:
+        return self._state.recovery_path
 
     def load(self) -> tuple[GameProfile, ...]:
-        try:
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return ()
-        except (OSError, json.JSONDecodeError):
-            return ()
+        loaded = self._state.load(self._parse)
+        return loaded or ()
+
+    def _parse(self, payload: object) -> tuple[GameProfile, ...] | None:
         if not isinstance(payload, dict) or payload.get("format") != self.FORMAT:
-            return ()
+            return None
         games = payload.get("games")
         if not isinstance(games, list):
-            return ()
+            return None
         profiles = tuple(
             profile for item in games if (profile := GameProfile.from_mapping(item)) is not None
         )
+        if len(profiles) != len(games):
+            return None
         return tuple(sorted(profiles, key=lambda item: item.updated_utc, reverse=True))
 
     def save(self, profiles: tuple[GameProfile, ...]) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_suffix(self.path.suffix + ".tmp")
-        temporary.write_text(
-            json.dumps(
-                {
-                    "format": self.FORMAT,
-                    "games": [profile.to_mapping() for profile in profiles],
-                },
-                indent=2,
-                sort_keys=True,
-            )
-            + "\n",
-            encoding="utf-8",
+        self._state.save(
+            {
+                "format": self.FORMAT,
+                "games": [profile.to_mapping() for profile in profiles],
+            }
         )
-        if os.name != "nt":
-            temporary.chmod(stat.S_IRUSR | stat.S_IWUSR)
-        os.replace(temporary, self.path)
 
     def upsert(self, profile: GameProfile) -> tuple[GameProfile, ...]:
         profiles = list(self.load())

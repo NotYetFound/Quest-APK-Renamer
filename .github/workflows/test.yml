@@ -13,8 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -23,7 +23,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libegl1
       - name: Install source and checks
-        run: python -m pip install -e '.[dev]'
+        run: |
+          python -m pip install "pip==26.2.1"
+          python -m pip install -r packaging/requirements-build.txt -e .
       - name: Validate Python and QML shell
         env:
           QT_QPA_PLATFORM: offscreen

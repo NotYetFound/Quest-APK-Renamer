@@ -12,6 +12,7 @@ from quest_renamer.domain.models import (
     DeviceSnapshot,
     ReadinessCheck,
 )
+from quest_renamer.domain.obb_names import ObbNameError, renamed_obb_filenames
 from quest_renamer.domain.package_ids import package_id_error
 from quest_renamer.domain.preflight import PreflightResult
 from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
@@ -33,17 +34,18 @@ def _same_or_inside(path: Path, parent: Path) -> bool:
     return True
 
 
-def _host_space_requirement(request: BuildRequest) -> int:
+def _host_space_requirement(apk_size: int, obb_size: int) -> int:
     # Apktool's decoded tree can be several times larger than the compressed APK.
-    apk_size = request.source.apk.stat().st_size
-    obb_size = sum(path.stat().st_size for path in request.source.obbs if path.is_file())
     return max(768 * MIB, apk_size * 6 + obb_size + 256 * MIB)
 
 
-def _quest_space_requirement(request: BuildRequest) -> int:
-    apk_size = request.source.apk.stat().st_size
-    obb_size = sum(path.stat().st_size for path in request.source.obbs if path.is_file())
-    return int(apk_size * 1.25) + (obb_size if request.copy_obbs else 0) + 128 * MIB
+def _quest_space_requirement(
+    apk_size: int,
+    obb_size: int,
+    *,
+    copy_obbs: bool,
+) -> int:
+    return int(apk_size * 1.25) + (obb_size if copy_obbs else 0) + 128 * MIB
 
 
 class AutomaticPreflight:
@@ -59,14 +61,40 @@ class AutomaticPreflight:
     ) -> PreflightResult:
         checks: list[ReadinessCheck] = []
         source = request.source
+        apk_exists = source.apk.is_file()
+        apk_size = 0
+        if apk_exists:
+            try:
+                apk_size = source.apk.stat().st_size
+            except OSError:
+                apk_exists = False
+        obb_size = 0
+        obbs_exist = True
+        for path in source.obbs:
+            if not path.is_file():
+                obbs_exist = False
+                continue
+            try:
+                obb_size += path.stat().st_size
+            except OSError:
+                obbs_exist = False
 
         source_problem = ""
-        if not source.apk.is_file():
+        if not apk_exists:
             source_problem = "The selected APK no longer exists."
         elif not os.access(source.apk, os.R_OK):
             source_problem = "The selected APK cannot be read."
-        elif any(not path.is_file() for path in source.obbs):
+        elif not obbs_exist:
             source_problem = "One or more selected OBB files no longer exist."
+        elif source.obbs:
+            try:
+                renamed_obb_filenames(
+                    source.obbs,
+                    source_package=source.package_name,
+                    target_package=request.package_name,
+                )
+            except ObbNameError as exc:
+                source_problem = str(exc)
         checks.append(
             ReadinessCheck(
                 "source",
@@ -145,7 +173,7 @@ class AutomaticPreflight:
             )
         )
 
-        host_required = _host_space_requirement(request) if source.apk.is_file() else 0
+        host_required = _host_space_requirement(apk_size, obb_size) if apk_exists else 0
         host_state = CheckState.PASSED
         host_detail = "There is enough working space on this computer."
         try:
@@ -162,7 +190,15 @@ class AutomaticPreflight:
             host_detail = "Free space on the output drive could not be checked."
         checks.append(ReadinessCheck("host_space", "Computer space", host_state, host_detail))
 
-        quest_required = _quest_space_requirement(request) if source.apk.is_file() else 0
+        quest_required = (
+            _quest_space_requirement(
+                apk_size,
+                obb_size,
+                copy_obbs=request.copy_obbs,
+            )
+            if apk_exists
+            else 0
+        )
         quest_state = CheckState.PASSED
         quest_detail = "The connected Quest has enough estimated free space."
         if device is None or not device.connected or device.free_bytes is None:

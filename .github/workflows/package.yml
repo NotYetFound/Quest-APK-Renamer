@@ -9,12 +9,39 @@ permissions:
   contents: write
 
 jobs:
+  quality:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install Qt runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libegl1
+      - name: Run the complete source quality gate
+        run: |
+          python -m pip install "pip==26.2.1"
+          python -m pip install -r packaging/requirements-build.txt -e .
+      - name: Validate Python and QML shell
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ruff check src tests scripts
+          mypy src
+          pytest -q
+          quest-renamer --smoke-test
+
   linux:
+    needs: quality
     runs-on: ubuntu-22.04
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -26,7 +53,7 @@ jobs:
         run: |
           chmod +x packaging/linux/*.sh
           packaging/linux/build.sh
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: linux-x86_64
           path: |
@@ -37,11 +64,12 @@ jobs:
           if-no-files-found: error
 
   windows:
+    needs: quality
     runs-on: windows-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -51,7 +79,7 @@ jobs:
       - name: Build Windows packages
         shell: pwsh
         run: packaging/windows/build.ps1 -BuildInstaller
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: windows-x86_64
           path: |
@@ -62,6 +90,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    needs: quality
     strategy:
       fail-fast: false
       matrix:
@@ -73,8 +102,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13"
           cache: pip
@@ -123,7 +152,7 @@ jobs:
           else
               echo "Notarization credentials are not configured."
           fi
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: macos-${{ matrix.arch }}
           path: |
@@ -143,8 +172,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: "*"
           path: artifacts

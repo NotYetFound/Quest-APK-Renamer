@@ -19,6 +19,8 @@ class FakeDialog:
         self.options: dict[object, bool] = {}
         self.file_mode: object = None
         self.accept_mode: object = None
+        self.name_filters: list[str] = []
+        self.default_suffix = ""
 
     def setWindowTitle(self, _title: str) -> None:
         pass
@@ -35,11 +37,11 @@ class FakeDialog:
     def setAcceptMode(self, mode: object) -> None:
         self.accept_mode = mode
 
-    def setNameFilters(self, _filters: list[str]) -> None:
-        pass
+    def setNameFilters(self, filters: list[str]) -> None:
+        self.name_filters = filters
 
-    def setDefaultSuffix(self, _suffix: str) -> None:
-        pass
+    def setDefaultSuffix(self, suffix: str) -> None:
+        self.default_suffix = suffix
 
     def selectFile(self, _name: str) -> None:
         pass
@@ -237,6 +239,36 @@ class FileDialogControllerTests(unittest.TestCase):
                 received,
                 [QUrl.fromLocalFile(str(selected)).toLocalFile()],
             )
+
+    def test_library_archive_uses_native_open_and_save_filters(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "library.qarlib"
+            open_dialog = FakeDialog(QFileDialog.DialogCode.Accepted, (archive,))
+            save_dialog = FakeDialog(QFileDialog.DialogCode.Accepted, (archive,))
+            sequence = DialogSequence(open_dialog, save_dialog)
+            controller = FileDialogController(
+                dialog_factory=sequence,
+                clock=FakeClock(0.0, 1.0, 2.0, 3.0),
+                platform_name="win32",
+            )
+            opened: list[str] = []
+            saved: list[str] = []
+            controller.fileSelected.connect(
+                lambda _purpose, url: opened.append(url.toLocalFile())
+            )
+            controller.saveSelected.connect(
+                lambda _purpose, url: saved.append(url.toLocalFile())
+            )
+
+            controller.chooseLibraryArchive("import", "Import", str(root))
+            controller.saveLibraryArchive("export", "Export", archive.name, str(root))
+
+            self.assertEqual(opened, [str(archive)])
+            self.assertEqual(saved, [str(archive)])
+            self.assertIn("*.qarlib", open_dialog.name_filters[0])
+            self.assertIn("*.qarlib", save_dialog.name_filters[0])
+            self.assertEqual(save_dialog.default_suffix, "qarlib")
 
 
 if __name__ == "__main__":

@@ -14,7 +14,15 @@ from typing import Literal
 
 from quest_renamer.infrastructure.desktop_open import external_process_environment
 
-PickerKind = Literal["folder", "apk", "apks", "save_json", "save_log"]
+PickerKind = Literal[
+    "folder",
+    "apk",
+    "apks",
+    "archive",
+    "save_archive",
+    "save_json",
+    "save_log",
+]
 PickerRunner = Callable[..., subprocess.CompletedProcess[str]]
 
 
@@ -50,9 +58,11 @@ def linux_picker_command(
     if Path(helper).name == "kdialog":
         if kind == "folder":
             return [helper, "--title", title, "--getexistingdirectory", str(start)]
-        if kind in {"save_json", "save_log"}:
+        if kind in {"save_archive", "save_json", "save_log"}:
             file_filter = (
-                "*.json|JSON report (*.json)"
+                "*.qarlib|Quest APK Renamer Library (*.qarlib)"
+                if kind == "save_archive"
+                else "*.json|JSON report (*.json)"
                 if kind == "save_json"
                 else "*.log|Log files (*.log)"
             )
@@ -72,7 +82,9 @@ def linux_picker_command(
             *multiple,
             "--getopenfilename",
             str(start),
-            "*.apk|Android packages (*.apk)",
+            "*.qarlib|Quest APK Renamer Library (*.qarlib)"
+            if kind == "archive"
+            else "*.apk|Android packages (*.apk)",
         ]
 
     command = [helper, "--file-selection"]
@@ -80,7 +92,7 @@ def linux_picker_command(
         command.append("--directory")
     elif kind == "apks":
         command.extend(["--multiple", "--separator=\n"])
-    elif kind in {"save_json", "save_log"}:
+    elif kind in {"save_archive", "save_json", "save_log"}:
         command.extend(["--save", "--confirm-overwrite"])
     command.extend(
         [
@@ -92,7 +104,9 @@ def linux_picker_command(
     )
     if kind != "folder":
         label = (
-            "JSON report | *.json"
+            "Quest APK Renamer Library | *.qarlib"
+            if kind in {"archive", "save_archive"}
+            else "JSON report | *.json"
             if kind == "save_json"
             else "Log files | *.log"
             if kind == "save_log"
@@ -208,18 +222,38 @@ def _tk_pick(
                     initialdir=str(start),
                     filetypes=[("Android packages", "*.apk"), ("All files", "*")],
                 )
-            elif kind in {"save_json", "save_log"}:
+            elif kind in {"save_archive", "save_json", "save_log"}:
+                is_archive = kind == "save_archive"
                 is_json = kind == "save_json"
                 selected = filedialog.asksaveasfilename(
                     title=title,
                     initialdir=str(start),
                     initialfile=suggested_name,
-                    defaultextension=".json" if is_json else ".log",
+                    defaultextension=(
+                        ".qarlib" if is_archive else ".json" if is_json else ".log"
+                    ),
                     filetypes=[
                         (
-                            "JSON report" if is_json else "Log files",
-                            "*.json" if is_json else "*.log",
+                            "Quest APK Renamer Library"
+                            if is_archive
+                            else "JSON report"
+                            if is_json
+                            else "Log files",
+                            "*.qarlib"
+                            if is_archive
+                            else "*.json"
+                            if is_json
+                            else "*.log",
                         ),
+                        ("All files", "*"),
+                    ],
+                )
+            elif kind == "archive":
+                selected = filedialog.askopenfilename(
+                    title=title,
+                    initialdir=str(start),
+                    filetypes=[
+                        ("Quest APK Renamer Library", "*.qarlib"),
                         ("All files", "*"),
                     ],
                 )

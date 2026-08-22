@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from quest_renamer.domain.models import DeviceSnapshot
+from quest_renamer.domain.models import DeviceSnapshot, InstalledQuestApp
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +54,60 @@ def parse_available_storage(output: str) -> int | None:
         if available.isdigit():
             return int(available) * 1024
     return None
+
+
+def parse_user_packages(output: str) -> tuple[str, ...]:
+    """Parse `pm list packages` output without accepting shell noise as IDs."""
+    return tuple(sorted(parse_user_package_versions(output), key=str.casefold))
+
+
+def parse_user_package_versions(output: str) -> dict[str, str]:
+    """Parse package IDs and optional `--show-versioncode` values in one pass."""
+    packages: dict[str, str] = {}
+    for line in output.replace("\r", "").splitlines():
+        match = re.fullmatch(
+            r"\s*package:([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)"
+            r"(?:\s+versionCode:(\d+))?(?:\s+.*)?",
+            line,
+        )
+        if match:
+            packages[match.group(1)] = match.group(2) or ""
+    return packages
+
+
+def parse_package_versions(
+    output: str,
+    packages: set[str],
+) -> dict[str, tuple[str, str]]:
+    """Return version code/name pairs from one `dumpsys package packages` response."""
+    versions: dict[str, tuple[str, str]] = {}
+    current = ""
+    version_code = ""
+    version_name = ""
+
+    def finish() -> None:
+        if current in packages:
+            versions[current] = (version_code, version_name)
+
+    for raw in output.replace("\r", "").splitlines():
+        match = re.match(r"\s*Package \[([^]]+)]", raw)
+        if match:
+            finish()
+            candidate = match.group(1).strip()
+            current = candidate if candidate in packages else ""
+            version_code = ""
+            version_name = ""
+            continue
+        if not current:
+            continue
+        stripped = raw.strip()
+        if stripped.startswith("versionCode="):
+            version_code = stripped.removeprefix("versionCode=").split()[0]
+        elif stripped.startswith("versionName="):
+            value = stripped.removeprefix("versionName=").strip()
+            version_name = "" if value == "null" else value
+    finish()
+    return versions
 
 
 def _adb_candidates(
@@ -152,9 +206,22 @@ class AdbDeviceService:
         run: RunCommand = subprocess.run,
     ) -> None:
         self._configured_adb = adb
+        self._resolved_adb: Path | None = None
         self._resource_root = resource_root
         self._executable = executable
         self._run = run
+        self._models: dict[str, str] = {}
+
+    def _adb(self) -> Path | None:
+        if self._configured_adb is not None:
+            return self._configured_adb
+        if self._resolved_adb is not None and self._resolved_adb.is_file():
+            return self._resolved_adb
+        self._resolved_adb = find_adb(
+            resource_root=self._resource_root,
+            executable=self._executable,
+        )
+        return self._resolved_adb
 
     def _command(
         self, arguments: Sequence[str], timeout: int = 8
@@ -175,10 +242,7 @@ class AdbDeviceService:
         )
 
     def snapshot(self) -> DeviceSnapshot:
-        adb = self._configured_adb or find_adb(
-            resource_root=self._resource_root,
-            executable=self._executable,
-        )
+        adb = self._adb()
         if adb is None:
             return DeviceSnapshot(
                 False,
@@ -228,13 +292,18 @@ class AdbDeviceService:
 
         record = ready[0]
         target = (str(adb), "-s", record.serial)
-        model = record.attributes.get("model", "Quest")
-        try:
-            model_result = self._command((*target, "shell", "getprop", "ro.product.model"))
-            if model_result.returncode == 0 and model_result.stdout.strip():
-                model = model_result.stdout.strip()
-        except (OSError, subprocess.TimeoutExpired):
-            pass
+        model = self._models.get(record.serial, "")
+        if not model:
+            model = record.attributes.get("model", "Quest")
+            try:
+                model_result = self._command(
+                    (*target, "shell", "getprop", "ro.product.model")
+                )
+                if model_result.returncode == 0 and model_result.stdout.strip():
+                    model = model_result.stdout.strip()
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            self._models[record.serial] = model
 
         free_bytes = None
         try:
@@ -250,4 +319,61 @@ class AdbDeviceService:
             model=model,
             free_bytes=free_bytes,
             detail=f"Connected through {adb}",
+        )
+
+    def installed_apps(self, serial: str) -> tuple[InstalledQuestApp, ...]:
+        """List third-party packages, using two bounded ADB calls for any library size."""
+        adb = self._adb()
+        if adb is None:
+            raise OSError("Android Platform Tools are not available.")
+        if not serial:
+            raise OSError("No authorized Quest is selected.")
+        target = (str(adb), "-s", serial, "shell")
+        try:
+            listed = self._command(
+                (*target, "pm", "list", "packages", "-3", "--show-versioncode"),
+                timeout=15,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OSError(f"Installed apps could not be read: {exc}") from exc
+        option_output = f"{listed.stdout}\n{listed.stderr}".casefold()
+        show_version_unsupported = any(
+            marker in option_output
+            for marker in ("unknown option", "unsupported option", "unrecognized option")
+        )
+        if listed.returncode != 0 or show_version_unsupported:
+            try:
+                listed = self._command(
+                    (*target, "pm", "list", "packages", "-3"),
+                    timeout=15,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                raise OSError(f"Installed apps could not be read: {exc}") from exc
+            if listed.returncode != 0:
+                detail = (listed.stderr or listed.stdout).strip() or "ADB returned an error."
+                raise OSError(f"Installed apps could not be read: {detail}")
+        package_versions = parse_user_package_versions(listed.stdout)
+        packages = tuple(sorted(package_versions, key=str.casefold))
+        if not packages:
+            return ()
+        if all(package_versions[package] for package in packages):
+            return tuple(
+                InstalledQuestApp(package, package_versions[package])
+                for package in packages
+            )
+        try:
+            details = self._command(
+                (*target, "dumpsys", "package", "packages"),
+                timeout=25,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            details = None
+        versions = (
+            parse_package_versions(details.stdout, set(packages))
+            if details is not None and details.returncode == 0
+            else {}
+        )
+        return tuple(
+            InstalledQuestApp(package, *versions.get(package, ("", "")))
+            for package in packages
         )

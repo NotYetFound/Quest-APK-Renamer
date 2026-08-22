@@ -19,7 +19,7 @@ target_arch="${MACOS_TARGET_ARCH:-$(uname -m)}"
 [[ "$target_arch" == "$(uname -m)" ]] || { echo "Use a native $target_arch Python runner." >&2; exit 1; }
 
 [[ -x "$python_bin" ]] || python3 -m venv "$venv_dir"
-"$python_bin" -m pip install --upgrade pip
+"$python_bin" -m pip install "pip==26.2.1"
 "$python_bin" -m pip install -r "$project_dir/packaging/requirements-build.txt" -e "$project_dir"
 if [[ "$skip_bootstrap" -eq 0 ]]; then
     PYTHON_BIN="$python_bin" "$script_dir/bootstrap-dependencies.sh"

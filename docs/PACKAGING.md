@@ -63,7 +63,7 @@ launch the packaged application in smoke-test mode before producing release arch
 
 `.github/workflows/package.yml` builds Linux x86_64, Windows x86_64, macOS arm64, and macOS
 x86_64. A tag matching `v<app version>` publishes the resulting files in one GitHub release;
-a suffix such as `v1.4.4-beta.1` creates a prerelease.
+a suffix such as `v1.4.5-beta.1` creates a prerelease.
 
 macOS artifacts are ad-hoc signed when no credentials are configured. To produce a normal
 Gatekeeper-friendly release, configure these repository secrets:
