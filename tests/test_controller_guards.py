@@ -322,7 +322,9 @@ class BulkGuardTests(unittest.TestCase):
             controller.copyDetail(0)
             self.assertTrue(copied and "safety deadline" in copied[0])
             controller.openOutput(0)
-            self.assertEqual([path.resolve() for path in opened], [(parent / "First").resolve()])
+            self.assertEqual(
+                [path.resolve() for path in opened], [(parent / "First").resolve()]
+            )
 
     def test_disconnecting_the_headset_skips_the_remaining_queue(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
