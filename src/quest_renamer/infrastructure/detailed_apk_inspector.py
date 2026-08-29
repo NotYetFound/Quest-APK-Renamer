@@ -243,15 +243,15 @@ def scan_package_references(
         counts = count_file_patterns(path, patterns, token, max_size=MAX_SCAN_SIZE, size=size)
         if counts is None:
             continue
-        dotted_count = counts[0]
-        slashed_count = counts[1] if len(counts) > 1 else 0
-        occurrences = dotted_count + slashed_count
+        identity_count = counts[0]
+        namespace_count = counts[1] if len(counts) > 1 else 0
+        occurrences = identity_count + namespace_count
         if not occurrences:
             continue
-        hit = ReferenceHit(relative, occurrences, dotted_count, slashed_count)
+        hit = ReferenceHit(relative, occurrences, identity_count, namespace_count)
         if is_technical_file(relative):
             technical.append(hit)
-            total += occurrences
+            total += identity_count
         else:
             preserved.append(hit)
             if relative.lower().endswith((".so", ".dex")):

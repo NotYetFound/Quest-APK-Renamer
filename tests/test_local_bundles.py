@@ -157,6 +157,24 @@ class LocalBundleTests(unittest.TestCase):
             with self.assertRaisesRegex(BundleSelectionError, "unsupported names"):
                 LocalBundleInspector().inspect_folder(root)
 
+    def test_tagless_patch_obb_in_package_folder_is_accepted(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "com.Cyborn.Hubris.apk").write_bytes(b"apk")
+            obb_dir = root / "com.Cyborn.Hubris"
+            obb_dir.mkdir()
+            names = ("main.36988.com.Cyborn.Hubris.obb", "patch.com.Cyborn.Hubris.obb")
+            for name in names:
+                (obb_dir / name).write_bytes(name.encode())
+            (root / "release.manifest").write_text(
+                "Game Name;Package Name;Version Code\nHubris;com.Cyborn.Hubris;36988\n",
+                encoding="utf-8",
+            )
+
+            bundle = LocalBundleInspector().inspect_folder(root)
+
+            self.assertEqual([path.name for path in bundle.obbs], list(names))
+
     def test_unreal_pakchunk_obb_names_are_discovered(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

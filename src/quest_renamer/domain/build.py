@@ -11,6 +11,11 @@ class PackageRewriteReport:
     changed_files: int
     changed_occurrences: int
     preserved_files: tuple[str, ...] = ()
+    # Java class references (descriptors, paths, dotted class names) deliberately
+    # kept so JNI, reflection, and layout inflation keep resolving.
+    namespace_references: int = 0
+    # Relative manifest component names expanded against the original package.
+    qualified_components: int = 0
 
 
 @dataclass(frozen=True, slots=True)

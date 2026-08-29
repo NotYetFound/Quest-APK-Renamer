@@ -645,7 +645,7 @@ class AdbApkInstaller:
         for remote_item in remote.values():
             if remote_item.name in expected:
                 continue
-            parsed = parse_obb_filename(remote_item.name)
+            parsed = parse_obb_filename(remote_item.name, bundle.package_name)
             belongs_to_package = bool(
                 parsed is not None
                 and parsed.package_name.casefold() == bundle.package_name.casefold()

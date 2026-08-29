@@ -38,8 +38,8 @@ class SignatureDetail:
 class ReferenceHit:
     path: str
     occurrences: int
-    dotted: int
-    slashed: int
+    identity: int
+    namespace: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +153,6 @@ def _reference_mapping(item: ReferenceHit) -> dict[str, str | int]:
     return {
         "path": item.path,
         "occurrences": item.occurrences,
-        "dotted": item.dotted,
-        "slashed": item.slashed,
+        "identity": item.identity,
+        "namespace": item.namespace,
     }

@@ -22,7 +22,7 @@ Get the current stable build from the
 
 | Platform | Recommended download | Alternative |
 | --- | --- | --- |
-| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.6-Setup.exe` | Portable ZIP |
+| Windows 10/11 x64 | `Quest-APK-Renamer-1.4.7-Setup.exe` | Portable ZIP |
 | Linux x86_64 | AppImage | Portable tarball with launcher installer |
 | Apple Silicon macOS | `macOS-arm64.dmg` | — |
 | Intel macOS | `macOS-x86_64.dmg` | — |
@@ -38,8 +38,10 @@ an unknown-developer warning — see [Platform notes](#platform-notes).
 2. **Check the new ID** — a safe suggestion such as `com.dev.studio.game` appears automatically;
    use the `.mr` / `.dev` / `.test` / `.qa` presets, type your own, or set a default tag in
    Settings.
-3. **Build renamed copy** — the app decodes, rewrites every technical package reference, rebuilds,
-   signs with its persistent key, verifies the signature, and writes the result to a sibling
+3. **Build renamed copy** — the app decodes, rewrites the application ID everywhere it matters
+   (manifest, provider authorities, permissions, actions, identity strings) while keeping the
+   game's Java classes untouched so native code still binds, rebuilds, signs with its persistent
+   key, verifies the signature, and writes the result to a sibling
    ` - Renamed` folder together with renamed OBBs, a regenerated `release.manifest`, and readable
    reports. The source folder is never touched unless you enable **Replace source after build**.
 4. **Install** — connect the Quest by USB (or Wi-Fi, see below), approve USB debugging once, and
@@ -91,8 +93,9 @@ and Copy-error actions and the final overview lists every result.
 
 An opt-in full decode that reports version/SDK/ABI/locale/component details, file hashes,
 signature schemes, certificates, recognized signer and lineage, permissions and features, and the
-exact package references a rename would change — using the same token rules as the rewrite, so
-`com.example.gamepad` is never mistaken for `com.example.game`. Export as JSON or copy a summary.
+exact application-ID references a rename would change and the Java class references it keeps —
+using the same rules as the rewrite, so `com.example.gamepad` is never mistaken for
+`com.example.game`. Export as JSON or copy a summary.
 
 ![APK Inspector overview](docs/screenshots/apk-inspector.png)
 

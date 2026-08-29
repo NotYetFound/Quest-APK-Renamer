@@ -4,6 +4,26 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.4.7] - 2026-08-29
+
+### Fixed
+
+- Renamed copies of apps with their own native (JNI) code no longer crash at launch. The rewrite
+  now changes only the application ID (manifest `package`, provider authorities, custom
+  permissions, intent actions, and identity strings) and leaves every Java class name and
+  descriptor untouched, so `Java_<package>_…` exports and `FindClass` lookups in the game's
+  `.so` files still resolve. Relative manifest component names are expanded against the original
+  package first. Layout class names, `R` references, and reflection strings are preserved as well.
+- Bundles that ship a tag-less expansion file such as `patch.com.Cyborn.Hubris.obb` next to a
+  versioned `main.<version>.<package>.obb` are accepted, renamed, installed, and pruned correctly
+  instead of being rejected as "unsupported files".
+
+### Changed
+
+- Reference scanning is 30× faster on large decodes (the regexes now lead with the literal
+  package so Python's prefix scan applies). Build reports and the Inspector list application-ID
+  references changed and Java class references kept separately.
+
 ## [1.4.6] - 2026-08-22
 
 ### Added

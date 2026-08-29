@@ -34,6 +34,34 @@ class ObbNameTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIsNone(parse_obb_filename(name))
 
+    def test_tagless_patch_obb_is_recognized_and_renamed(self) -> None:
+        name = "patch.com.Cyborn.Hubris.obb"
+
+        with_package = parse_obb_filename(name, "com.Cyborn.Hubris")
+        alone = parse_obb_filename(name)
+        versioned = parse_obb_filename("main.36988.com.Cyborn.Hubris.obb")
+
+        self.assertIsNotNone(with_package)
+        self.assertEqual(with_package.tag, "")  # type: ignore[union-attr]
+        self.assertEqual(with_package.package_name, "com.Cyborn.Hubris")  # type: ignore[union-attr]
+        self.assertEqual(alone, with_package)
+        self.assertEqual(versioned.tag, "36988")  # type: ignore[union-attr]
+        self.assertEqual(
+            renamed_obb_filenames(
+                (Path("/bundle/main.36988.com.Cyborn.Hubris.obb"), Path(f"/bundle/{name}")),
+                source_package="com.Cyborn.Hubris",
+                target_package="com.dev.Cyborn.Hubris",
+            ),
+            ("main.36988.com.dev.Cyborn.Hubris.obb", "patch.com.dev.Cyborn.Hubris.obb"),
+        )
+
+    def test_known_package_resolves_ambiguous_tag(self) -> None:
+        parsed = parse_obb_filename("patch.com.example.game.obb", "example.game")
+
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed.tag, "com")  # type: ignore[union-attr]
+        self.assertEqual(parsed.package_name, "example.game")  # type: ignore[union-attr]
+
     def test_collision_check_is_case_insensitive(self) -> None:
         sources = (
             Path("/one/main.42.com.example.game.obb"),

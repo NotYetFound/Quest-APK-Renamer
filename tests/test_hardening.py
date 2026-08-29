@@ -47,9 +47,13 @@ class ReferenceBoundaryTests(unittest.TestCase):
             b'Lcom/example/game/ui/A; "com.example.game" com.example.gamepad',
             "com.example.game.mr",
         )
-        self.assertEqual(count, 2)
+        self.assertEqual(count, 1)
         self.assertEqual(
-            updated, b'Lcom/example/game/mr/ui/A; "com.example.game.mr" com.example.gamepad'
+            updated, b'Lcom/example/game/ui/A; "com.example.game.mr" com.example.gamepad'
+        )
+        self.assertEqual(
+            patterns.substitute(b"com.example.game.sub com.example.game.ui.Main", "x.y")[0],
+            b"x.y.sub com.example.game.ui.Main",
         )
 
     def test_chunked_counting_matches_whole_file_counting(self) -> None:
@@ -86,7 +90,8 @@ class ReferenceBoundaryTests(unittest.TestCase):
             smali.parent.mkdir(parents=True)
             smali.write_text(
                 "Lcom/example/game/Main;\nLcom/example/gamepad/Pad;\n"
-                'const-string v0, "com.example.game.provider"\n',
+                'const-string v0, "com.example.game.provider"\n'
+                'const-string v1, "com.example.gamepad"\n',
                 encoding="utf-8",
             )
             (decoded / "AndroidManifest.xml").write_text(
@@ -99,11 +104,13 @@ class ReferenceBoundaryTests(unittest.TestCase):
             )
 
             self.assertEqual(result.changed_files, 2)
-            self.assertEqual(result.changed_occurrences, 3)
+            self.assertEqual(result.changed_occurrences, 2)
+            self.assertEqual(result.namespace_references, 1)
             text = smali.read_text(encoding="utf-8")
-            self.assertIn("Lcom/example/game/mr/Main;", text)
+            self.assertIn("Lcom/example/game/Main;", text)
             self.assertIn("Lcom/example/gamepad/Pad;", text)
             self.assertIn("com.example.game.mr.provider", text)
+            self.assertIn('"com.example.gamepad"', text)
             manifest = (decoded / "AndroidManifest.xml").read_text(encoding="utf-8")
             self.assertIn('package="com.example.game.mr"', manifest)
             self.assertIn("com.example.gamepad.files", manifest)

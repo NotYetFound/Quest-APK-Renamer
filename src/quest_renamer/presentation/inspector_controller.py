@@ -294,7 +294,11 @@ class InspectorController(QObject):
             return []
         preview = self._analysis.references
         rows: list[dict[str, Any]] = [
-            {"action": "Update", "path": item.path, "count": item.occurrences}
+            {
+                "action": "Update" if item.identity else "Keep",
+                "path": item.path,
+                "count": item.identity or item.namespace,
+            }
             for item in preview.technical_files
         ]
         rows.extend(
@@ -311,9 +315,11 @@ class InspectorController(QObject):
         if self._analysis is None:
             return ""
         preview = self._analysis.references
+        kept = sum(item.namespace for item in preview.technical_files)
         return (
-            f"{preview.technical_occurrences} technical references across "
-            f"{len(preview.technical_files)} files will be updated during a rename."
+            f"{preview.technical_occurrences} application-ID references across "
+            f"{len(preview.technical_files)} files will be updated during a rename; "
+            f"{kept} Java class references are kept so native code still binds."
         )
 
     @Property(str, notify=analysisChanged)

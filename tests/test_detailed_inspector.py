@@ -143,7 +143,7 @@ class DetailedInspectorTests(unittest.TestCase):
             self.assertEqual(result.locales, ("fr",))
             self.assertEqual(result.signature.identity.id, "nif")  # type: ignore[union-attr]
             self.assertEqual(result.signature.schemes, ("v2",))
-            self.assertEqual(result.references.technical_occurrences, 2)
+            self.assertEqual(result.references.technical_occurrences, 1)
             self.assertEqual(len(result.references.preserved_files), 2)
             self.assertEqual(len(result.references.native_warnings), 1)
             self.assertEqual(
@@ -190,7 +190,7 @@ class DetailedInspectorTests(unittest.TestCase):
                 },
                 controller.signingRows,
             )
-            self.assertIn("1 technical references", controller.referenceSummary)
+            self.assertIn("1 application-ID references", controller.referenceSummary)
             self.assertTrue((root / "report.json").is_file())
 
     def _wait_until(self, condition: object) -> None:

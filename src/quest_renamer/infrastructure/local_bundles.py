@@ -27,8 +27,8 @@ class BundleSelectionError(ValueError):
     """A selected folder cannot be represented as one unambiguous bundle."""
 
 
-def _obb_package(path: Path) -> str:
-    parsed = parse_obb_filename(path.name)
+def _obb_package(path: Path, expected_package: str = "") -> str:
+    parsed = parse_obb_filename(path.name, expected_package)
     return parsed.package_name if parsed is not None else ""
 
 
@@ -99,7 +99,7 @@ class LocalBundleInspector:
             mismatched = tuple(
                 path.name
                 for path in package_files
-                if (parsed := parse_obb_filename(path.name)) is not None
+                if (parsed := parse_obb_filename(path.name, package_name)) is not None
                 and parsed.package_name.casefold() != package_name.casefold()
             )
             if unsafe or mismatched:
@@ -112,7 +112,7 @@ class LocalBundleInspector:
             path.resolve()
             for path in _files_with_suffix(folder, ".obb")
             if path.is_file()
-            and (parsed := parse_obb_filename(path.name)) is not None
+            and (parsed := parse_obb_filename(path.name, package_name)) is not None
             and parsed.package_name.casefold() == package_name.casefold()
         }
         candidates.update(
@@ -121,7 +121,7 @@ class LocalBundleInspector:
             if child.is_dir()
             for path in _files_with_suffix(child, ".obb")
             if path.is_file()
-            and (parsed := parse_obb_filename(path.name)) is not None
+            and (parsed := parse_obb_filename(path.name, package_name)) is not None
             and parsed.package_name.casefold() == package_name.casefold()
         )
         if package_dir.is_dir():
@@ -133,7 +133,7 @@ class LocalBundleInspector:
         candidates.update(
             path
             for path in bundle.obbs
-            if parse_obb_filename(path.name) is None
+            if parse_obb_filename(path.name, package_name) is None
             and is_safe_preserved_obb(path.name)
         )
         return replace(
@@ -172,7 +172,7 @@ class LocalBundleInspector:
                 mismatched = tuple(
                     path.name
                     for path in package_obbs
-                    if (obb_package := _obb_package(path))
+                    if (obb_package := _obb_package(path, package_name))
                     and obb_package.casefold() != package_name.casefold()
                 )
                 if unsafe or mismatched:
@@ -186,7 +186,8 @@ class LocalBundleInspector:
                     sorted(
                         path.resolve()
                         for path in _files_with_suffix(folder, ".obb")
-                        if _obb_package(path).casefold() == package_name.casefold()
+                        if _obb_package(path, package_name).casefold()
+                        == package_name.casefold()
                     )
                 )
         else:

@@ -92,6 +92,15 @@ Domain models          Infrastructure adapters
 - A package reference is matched as a whole token (`infrastructure/reference_scanner.py`):
   `com.example.game` and its sub-packages match, `com.example.gamepad` and
   `org.foo.com.example.game` do not. The Inspector preview and the rewrite share this rule.
+- Only the *application ID* is rewritten. Identity references (the bare package, provider
+  authorities, custom permissions, intent actions and other lower-case / ALL_CAPS
+  continuations) change; Java namespace references (`Lcom/example/game/Main;`, `com/example/game`,
+  and dotted class names such as `com.example.game.ui.Main`) never do, because native libraries
+  bind to Java classes by their original names (`Java_com_example_game_Main_init` exports and
+  `FindClass`). Relative manifest component names are expanded against the original package
+  first so they keep pointing at those classes (`infrastructure/package_rewriter.py`).
+- Scan patterns start with the literal package so `re` can use its prefix scan; boundary
+  look-behind is checked in Python. This keeps 400 MB decodes under a second instead of ~30 s.
 - The installer prunes obsolete OBBs only when the bundle supplied the complete OBB set (or a
   retry was given the full set of names); APK-only installs never touch existing OBBs. Remote
   listings use one `stat` call per phase and remote digests are cached per transfer.

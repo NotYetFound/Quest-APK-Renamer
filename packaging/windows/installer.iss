@@ -1,5 +1,5 @@
 #ifndef MyAppVersion
-  #define MyAppVersion "1.4.6"
+  #define MyAppVersion "1.4.7"
 #endif
 #define MyAppName "Quest APK Renamer"
 #define MyAppExeName "Quest APK Renamer.exe"

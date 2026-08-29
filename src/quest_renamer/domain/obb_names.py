@@ -24,34 +24,59 @@ class ObbFileName:
 
     @property
     def filename(self) -> str:
-        return f"{self.kind}.{self.tag}.{self.package_name}.obb"
+        return self.renamed(self.package_name)
 
     def renamed(self, package_name: str) -> str:
         if not is_valid_package_id(package_name):
             raise ObbNameError(f"The target package ID is invalid: {package_name}")
-        return f"{self.kind}.{self.tag}.{package_name}.obb"
+        if self.tag:
+            return f"{self.kind}.{self.tag}.{package_name}.obb"
+        return f"{self.kind}.{package_name}.obb"
 
 
-def parse_obb_filename(filename: str) -> ObbFileName | None:
-    """Parse ``main|patch.<tag>.<package>.obb`` without changing its tag.
+def _is_version_tag(tag: str) -> bool:
+    return OBB_TAG.fullmatch(tag) is not None and not tag.isalpha()
+
+
+def parse_obb_filename(filename: str, expected_package: str = "") -> ObbFileName | None:
+    """Parse ``main|patch[.<tag>].<package>.obb`` without changing its tag.
 
     The tag is commonly a numeric Android version, but Unreal games also use
-    labels such as ``pakchunk0-Android_ASTC``. It is intentionally one dot-free
-    path-safe segment; the remainder must be a valid Android package ID.
+    labels such as ``pakchunk0-Android_ASTC``, and some games ship a tag-less
+    ``patch.<package>.obb``. The tag is intentionally one dot-free path-safe
+    segment; the remainder must be a valid Android package ID.
+
+    ``patch.com.example.game.obb`` is ambiguous on its own (tag ``com`` for package
+    ``example.game``, or no tag for ``com.example.game``). When the owning package
+    is known, the reading that matches it wins; otherwise a purely alphabetic
+    "tag" is taken as the first package segment, because real version tags
+    contain digits.
     """
 
     if not filename.lower().endswith(".obb"):
         return None
     stem = filename[:-4]
-    parts = stem.split(".", 2)
-    if len(parts) != 3:
+    kind, _separator, rest = stem.partition(".")
+    if kind.casefold() not in {"main", "patch"} or not rest:
         return None
-    kind, tag, package_name = parts
-    if kind.casefold() not in {"main", "patch"}:
-        return None
-    if OBB_TAG.fullmatch(tag) is None or not is_valid_package_id(package_name):
-        return None
-    return ObbFileName(kind.casefold(), tag, package_name)
+    kind = kind.casefold()
+    tag, tag_separator, package_name = rest.partition(".")
+    tagged = (
+        ObbFileName(kind, tag, package_name)
+        if tag_separator
+        and OBB_TAG.fullmatch(tag) is not None
+        and is_valid_package_id(package_name)
+        else None
+    )
+    untagged = ObbFileName(kind, "", rest) if is_valid_package_id(rest) else None
+    if expected_package:
+        wanted = expected_package.casefold()
+        for candidate in (tagged, untagged):
+            if candidate is not None and candidate.package_name.casefold() == wanted:
+                return candidate
+    if tagged is not None and untagged is not None and not _is_version_tag(tag):
+        return untagged
+    return tagged or untagged
 
 
 def require_obb_filename(filename: str) -> ObbFileName:
@@ -59,7 +84,7 @@ def require_obb_filename(filename: str) -> ObbFileName:
     if parsed is None:
         raise ObbNameError(
             f"Unsupported OBB filename: {filename}. Expected "
-            "main/patch.<version-or-chunk>.<package>.obb."
+            "main/patch[.<version-or-chunk>].<package>.obb."
         )
     return parsed
 
@@ -80,12 +105,12 @@ def renamed_obb_filenames(
     names: list[str] = []
     seen: dict[str, str] = {}
     for source in sources:
-        parsed = parse_obb_filename(source.name)
+        parsed = parse_obb_filename(source.name, source_package)
         if parsed is None:
             if not is_safe_preserved_obb(source.name):
                 raise ObbNameError(
                     f"Unsupported OBB filename: {source.name}. Expected a safe asset name "
-                    "or main/patch.<version-or-chunk>.<package>.obb."
+                    "or main/patch[.<version-or-chunk>].<package>.obb."
                 )
             renamed = source.name
         else:
