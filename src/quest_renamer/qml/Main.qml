@@ -12,14 +12,14 @@ ApplicationWindow {
     minimumHeight: 640
     visible: true
     title: "Quest APK Renamer"
-    color: "#171717"
+    color: "#111113"
 
     property color textPrimary: "#eeeeee"
     property color textSecondary: "#939393"
-    property color line: "#353535"
-    property color panel: "#1f1f1f"
-    property color panelRaised: "#242424"
-    property color accent: "#4c8abb"
+    property color line: "#2f2f36"
+    property color panel: "#1a1a1e"
+    property color panelRaised: "#1f1f24"
+    property color accent: "#4b90cc"
     readonly property int pageMargin: 30
     property int pageIndex: 0
     property int requestedPage: 0
@@ -36,8 +36,8 @@ ApplicationWindow {
     }
 
     function toneColor(tone, fallback) {
-        if (tone === "error") return "#d4776f"
-        if (tone === "warning") return "#d0b15b"
+        if (tone === "error") return "#e5706a"
+        if (tone === "warning") return "#e3b74a"
         if (tone === "success") return "#70b18f"
         if (tone === "active") return window.accent
         return fallback === undefined ? "#7c7c7c" : fallback
@@ -49,7 +49,16 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+4"; onActivated: window.showPage(3) }
     Shortcut { sequence: "Ctrl+5"; onActivated: window.showPage(4) }
     Shortcut { sequence: "Ctrl+L"; onActivated: logWindow.openWindow() }
-    Shortcut { sequences: [StandardKey.Quit, "Ctrl+Q"]; onActivated: Qt.quit() }
+    Shortcut { sequences: [StandardKey.Quit, "Ctrl+Q"]; onActivated: window.close() }
+
+    // Quitting mid-transfer would leave a half-copied folder or a half-installed
+    // game; ask first while any worker is running.
+    onClosing: close => {
+        if (appController.isBusy || bulkController.isBusy) {
+            close.accepted = false
+            quitDialog.open()
+        }
+    }
     Shortcut {
         sequence: "Ctrl+O"
         onActivated: {
@@ -156,6 +165,15 @@ ApplicationWindow {
             else if (purpose === "libraryExportAll")
                 libraryController.exportAll(url)
         }
+    }
+
+    DecisionDialog {
+        id: quitDialog
+        heading: "Quit while work is running?"
+        bodyText: "A build, install, or tool download is still running. Quitting now can leave a half-finished folder or a half-installed game on the Quest."
+        primaryText: "Keep working"
+        secondaryText: "Quit anyway"
+        onSecondaryChosen: Qt.quit()
     }
 
     DecisionDialog {
@@ -390,7 +408,7 @@ ApplicationWindow {
 
     header: Rectangle {
         implicitHeight: 50
-        color: "#1b1b1b"
+        color: "#161619"
 
         Rectangle {
             anchors.bottom: parent.bottom
@@ -410,13 +428,13 @@ ApplicationWindow {
                 implicitWidth: deviceContent.implicitWidth + 22
                 implicitHeight: 32
                 radius: 4
-                color: deviceMouse.containsMouse || deviceMenu.visible ? "#2b2b2b" : "#242424"
+                color: deviceMouse.containsMouse || deviceMenu.visible ? "#26262c" : "#1f1f24"
                 border.width: 1
-                border.color: deviceMenu.visible ? "#5a5a5a"
-                            : appController.deviceTone === "error" ? "#714743"
-                            : appController.deviceTone === "warning" ? "#6c5d36"
+                border.color: deviceMenu.visible ? "#52525d"
+                            : appController.deviceTone === "error" ? "#65393a"
+                            : appController.deviceTone === "warning" ? "#5a4f1c"
                             : appController.deviceTone === "success" ? "#3d6654"
-                            : "#414141"
+                            : "#3a3a43"
                 Row {
                     id: deviceContent
                     anchors.centerIn: parent
@@ -481,9 +499,9 @@ ApplicationWindow {
                     }
                     exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
                     background: Rectangle {
-                        color: "#232323"
+                        color: "#1e1e22"
                         border.width: 1
-                        border.color: "#474747"
+                        border.color: "#40404a"
                         radius: 6
                     }
 
@@ -501,9 +519,9 @@ ApplicationWindow {
                                 Layout.preferredHeight: 34
                                 radius: 17
                                 color: appController.deviceTone === "success" ? "#25382f"
-                                     : appController.deviceTone === "warning" ? "#3a3320"
-                                     : appController.deviceTone === "error" ? "#3c2624"
-                                     : "#2e2e2e"
+                                     : appController.deviceTone === "warning" ? "#312c12"
+                                     : appController.deviceTone === "error" ? "#351f1f"
+                                     : "#29292f"
                                 IconImage {
                                     anchors.centerIn: parent
                                     width: 16
@@ -540,7 +558,7 @@ ApplicationWindow {
                         }
 
                         // Attached devices (only when the user has to choose)
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#383838"; visible: attachedColumn.visible }
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#32323a"; visible: attachedColumn.visible }
                         ColumnLayout {
                             id: attachedColumn
                             visible: appController.deviceChoices.length > 1
@@ -561,7 +579,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 40
                                     radius: 4
-                                    color: attachedHover.hovered ? "#2d2d2d" : "transparent"
+                                    color: attachedHover.hovered ? "#28282e" : "transparent"
                                     HoverHandler { id: attachedHover }
                                     TapHandler { onTapped: { appController.selectDevice(attachedRow.modelData.serial); deviceMenu.close() } }
                                     RowLayout {
@@ -597,7 +615,7 @@ ApplicationWindow {
                         }
 
                         // Saved wireless Quests
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#383838" }
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#32323a" }
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.margins: 8
@@ -640,7 +658,7 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 46
                                     radius: 4
-                                    color: savedHover.hovered && !isCurrent ? "#2d2d2d" : "transparent"
+                                    color: savedHover.hovered && !isCurrent ? "#28282e" : "transparent"
                                     HoverHandler { id: savedHover }
                                     TapHandler {
                                         enabled: !savedRowItem.isCurrent && !appController.wirelessBusy
@@ -700,7 +718,7 @@ ApplicationWindow {
                         }
 
                         // Actions
-                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#383838" }
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#32323a" }
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.margins: 12
@@ -743,9 +761,9 @@ ApplicationWindow {
                                 visible: appController.wirelessStatus.length > 0
                                 Layout.fillWidth: true
                                 text: appController.wirelessStatus
-                                color: appController.wirelessTone === "error" ? "#d98a82"
+                                color: appController.wirelessTone === "error" ? "#e88780"
                                      : appController.wirelessTone === "success" ? "#78b894"
-                                     : appController.wirelessTone === "warning" ? "#d0ad68"
+                                     : appController.wirelessTone === "warning" ? "#e3b74a"
                                      : window.textSecondary
                                 font.pixelSize: 10
                                 wrapMode: Text.WordWrap
@@ -770,7 +788,7 @@ ApplicationWindow {
                 onClicked: appController.refreshDevice()
                 background: Rectangle {
                     radius: 3
-                    color: refreshButton.down ? "#2e2e2e" : refreshButton.hovered ? "#292929" : "transparent"
+                    color: refreshButton.down ? "#29292f" : refreshButton.hovered ? "#24242a" : "transparent"
                 }
                 contentItem: Item {
                     IconImage {
@@ -809,7 +827,7 @@ ApplicationWindow {
         Rectangle {
             Layout.preferredWidth: 174
             Layout.fillHeight: true
-            color: "#191919"
+            color: "#131315"
 
             Rectangle {
                 anchors.right: parent.right
@@ -989,7 +1007,7 @@ ApplicationWindow {
                             Panel {
                                 Layout.fillWidth: true
                                 Layout.preferredHeight: sourceColumn.implicitHeight + 32
-                                color: sourceDrop.containsDrag ? "#272727" : window.panel
+                                color: sourceDrop.containsDrag ? "#222227" : window.panel
                                 border.color: sourceDrop.containsDrag ? window.accent : window.line
                                 opacity: appController.isBusy ? 0.75 : 1
                                 Behavior on color { ColorAnimation { duration: 100 } }
@@ -1033,9 +1051,9 @@ ApplicationWindow {
                                             }
                                             background: Rectangle {
                                                 radius: 3
-                                                color: "#181818"
+                                                color: "#131316"
                                                 border.width: 1
-                                                border.color: sourceField.activeFocus ? window.accent : "#454545"
+                                                border.color: sourceField.activeFocus ? window.accent : "#3e3e48"
                                             }
                                         }
                                         AppButton {
@@ -1073,9 +1091,13 @@ ApplicationWindow {
                                                     + (appController.versionSummary ? "  •  " + appController.versionSummary : "")
                                                     + (appController.libraryMatch ? "  •  " + appController.libraryMatch : "")
                                                   : "Paste a path, browse, or drop one APK or game folder here."
-                                            color: appController.hasBundle ? window.textSecondary : "#777777"
+                                            color: appController.hasBundle ? window.textSecondary : "#8a8a8a"
                                             font.pixelSize: 10
                                             elide: Text.ElideRight
+                                            ToolTip.visible: truncated && sourceSummaryHover.hovered
+                                            ToolTip.text: text
+                                            ToolTip.delay: 400
+                                            HoverHandler { id: sourceSummaryHover }
                                         }
                                         Text {
                                             id: ofpSourceStatus
@@ -1136,7 +1158,7 @@ ApplicationWindow {
                                             Text {
                                                 Layout.fillWidth: true
                                                 text: appController.hasBundle ? appController.sourcePackage : "Current package appears here"
-                                                color: appController.hasBundle ? "#b5b5b5" : "#696969"
+                                                color: appController.hasBundle ? "#b5b5b5" : "#8a8a8a"
                                                 font.pixelSize: 11
                                                 elide: Text.ElideMiddle
                                             }
@@ -1162,7 +1184,7 @@ ApplicationWindow {
                                             text: appController.packageId
                                             placeholderText: "com.dev.studio.game"
                                             color: window.textPrimary
-                                            placeholderTextColor: "#5d6a76"
+                                            placeholderTextColor: "#7b8896"
                                             font.pixelSize: 14
                                             selectByMouse: true
                                             leftPadding: 12
@@ -1182,11 +1204,11 @@ ApplicationWindow {
                                             }
                                             background: Rectangle {
                                                 radius: 6
-                                                color: "#181818"
+                                                color: "#131316"
                                                 border.width: 1
                                                 border.color: packageField.activeFocus ? window.accent
-                                                              : appController.packageError && appController.hasBundle ? "#8a4d48"
-                                                              : "#454545"
+                                                              : appController.packageError && appController.hasBundle ? "#7d3d3b"
+                                                              : "#3e3e48"
                                             }
                                         }
                                         RowLayout {
@@ -1200,19 +1222,64 @@ ApplicationWindow {
                                             AppButton { text: ".qa"; enabled: parent.tagsEnabled; tip: "Append .qa to the original package ID"; onClicked: appController.applyTag("qa") }
                                             Item { Layout.fillWidth: true }
                                         }
+                                        RowLayout {
+                                            visible: appController.settings.changeDisplayName
+                                            Layout.fillWidth: true
+                                            spacing: 8
+                                            Text {
+                                                text: "Display name"
+                                                color: "#9a9a9a"
+                                                font.pixelSize: 11
+                                            }
+                                            TextField {
+                                                id: labelField
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: 30
+                                                enabled: packageField.enabled
+                                                text: appController.appLabel
+                                                placeholderText: appController.displayNamePreview
+                                                onVisibleChanged: if (!visible && appController.appLabel) appController.setAppLabel("")
+                                                color: window.textPrimary
+                                                placeholderTextColor: "#7b8896"
+                                                font.pixelSize: 12
+                                                selectByMouse: true
+                                                leftPadding: 10
+                                                rightPadding: 10
+                                                onEditingFinished: {
+                                                    if (text !== appController.appLabel)
+                                                        appController.setAppLabel(text)
+                                                }
+                                                ToolTip.visible: hovered
+                                                ToolTip.delay: 600
+                                                ToolTip.text: "Experimental: optional launcher name for the renamed copy. Changing it may cause errors in some apps. Leave empty to keep the original (the Settings suffix still applies)."
+                                                background: Rectangle {
+                                                    radius: 6
+                                                    color: "#131316"
+                                                    border.width: 1
+                                                    border.color: labelField.activeFocus ? window.accent : "#3e3e48"
+                                                }
+                                            }
+                                        }
                                         Text {
                                             Layout.fillWidth: true
+                                            readonly property bool labelChange: appController.hasBundle
+                                                                                && !appController.packageError
+                                                                                && appController.settings.changeDisplayName
+                                                                                && (appController.appLabel !== "" || appController.settings.labelSuffix !== "")
                                             text: appController.hasBundle
-                                                  ? (appController.packageError || "Game name and in-game text stay unchanged.")
+                                                  ? (appController.packageError
+                                                     || (labelChange ? "Display name will change — experimental, may cause errors in some apps."
+                                                                     : "Java classes and in-game text stay unchanged."))
                                                   : "A safe suggestion is generated automatically."
-                                            color: appController.packageError && appController.hasBundle ? "#d58a84" : "#808080"
+                                            color: appController.packageError && appController.hasBundle ? "#e88780"
+                                                   : labelChange ? "#e3b74a" : "#808080"
                                             font.pixelSize: 10
                                             elide: Text.ElideRight
                                         }
                                         Rectangle {
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 1
-                                            color: "#353535"
+                                            color: "#2f2f36"
                                         }
                                         SectionLabel { text: "SIGNING LINEAGE" }
                                         Text {
@@ -1265,9 +1332,9 @@ ApplicationWindow {
                                                 Layout.fillWidth: true
                                                 Layout.preferredHeight: 30
                                                 radius: 3
-                                                color: outputMouse.containsMouse ? "#282828" : "#232323"
+                                                color: outputMouse.containsMouse ? "#232328" : "#1e1e22"
                                                 border.width: 1
-                                                border.color: outputMouse.containsMouse ? "#505050" : "#383838"
+                                                border.color: outputMouse.containsMouse ? "#494954" : "#32323a"
                                                 Text {
                                                     anchors.left: parent.left
                                                     anchors.right: outputChange.left
@@ -1279,7 +1346,7 @@ ApplicationWindow {
                                                           : appController.hasBundle
                                                           ? appController.outputFolder
                                                           : "Select a game to choose its save location"
-                                                    color: appController.hasBundle ? window.textSecondary : "#666666"
+                                                    color: appController.hasBundle ? window.textSecondary : "#8f8f8f"
                                                     font.pixelSize: 10
                                                     elide: Text.ElideMiddle
                                                 }
@@ -1292,7 +1359,7 @@ ApplicationWindow {
                                                     text: appController.settings.replaceSourceAfterBuild
                                                           ? "Source"
                                                           : "Change…"
-                                                    color: appController.hasBundle ? "#b9b9b9" : "#666666"
+                                                    color: appController.hasBundle ? "#b9b9b9" : "#8f8f8f"
                                                     font.pixelSize: 10
                                                     font.weight: Font.Medium
                                                 }
@@ -1338,7 +1405,7 @@ ApplicationWindow {
                                         Rectangle {
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 1
-                                            color: "#353535"
+                                            color: "#2f2f36"
                                             Layout.topMargin: 1
                                             Layout.bottomMargin: 1
                                         }
@@ -1420,8 +1487,8 @@ ApplicationWindow {
                                         Layout.preferredWidth: 8
                                         Layout.preferredHeight: 8
                                         radius: 4
-                                        color: appController.noticeTone === "error" ? "#d4776f"
-                                             : appController.noticeTone === "warning" ? "#d0b15b"
+                                        color: appController.noticeTone === "error" ? "#e5706a"
+                                             : appController.noticeTone === "warning" ? "#e3b74a"
                                              : appController.noticeTone === "success" ? "#70b18f"
                                              : "#7c7c7c"
                                         Behavior on color { ColorAnimation { duration: 120 } }
@@ -1574,10 +1641,10 @@ ApplicationWindow {
                                 }
                             }
                             Item {
+                                visible: !libraryController.showInstalled
                                 Layout.preferredWidth: 238
                                 Layout.preferredHeight: 36
                                 RowLayout {
-                                    visible: !libraryController.showInstalled
                                     anchors.fill: parent
                                     spacing: 6
                                     AppButton {
@@ -1680,13 +1747,13 @@ ApplicationWindow {
                                     Layout.preferredWidth: 34
                                     Layout.preferredHeight: 34
                                     radius: 17
-                                    color: "#292929"
+                                    color: "#24242a"
                                     Text {
                                         anchors.centerIn: parent
                                         text: !libraryController.showInstalled
                                               ? "•"
                                               : libraryController.isConnected ? "•" : "—"
-                                        color: libraryController.errorMessage ? "#d0ad68" : "#777777"
+                                        color: libraryController.errorMessage ? "#e3b74a" : "#777777"
                                         font.pixelSize: 18
                                     }
                                 }
@@ -1746,8 +1813,8 @@ ApplicationWindow {
                                             width: libraryList.width
                                             height: libraryController.showInstalled ? 86 : 94
                                             color: libraryController.selectedId === modelData.id
-                                                   ? "#292929"
-                                                   : rowMouse.containsMouse ? "#252525" : "transparent"
+                                                   ? "#24242a"
+                                                   : rowMouse.containsMouse ? "#202025" : "transparent"
                                             Behavior on color { ColorAnimation { duration: 100 } }
 
                                             Rectangle {
@@ -1766,9 +1833,9 @@ ApplicationWindow {
                                                     Layout.preferredWidth: 40
                                                     Layout.preferredHeight: 40
                                                     radius: 8
-                                                    color: "#303030"
+                                                    color: "#2b2b31"
                                                     border.width: 1
-                                                    border.color: "#414141"
+                                                    border.color: "#3a3a43"
                                                     clip: true
                                                     Image {
                                                         id: libraryIconImage
@@ -1811,15 +1878,15 @@ ApplicationWindow {
                                                             implicitHeight: 22
                                                             radius: 11
                                                             color: libraryController.showInstalled
-                                                                   ? (modelData.managed ? "#263b32" : "#343434")
-                                                                   : (modelData.keyReady ? "#263b32" : "#3b3426")
+                                                                   ? (modelData.managed ? "#263b32" : "#2e2e35")
+                                                                   : (modelData.keyReady ? "#263b32" : "#332e14")
                                                             Text {
                                                                 id: libraryStatus
                                                                 anchors.centerIn: parent
                                                                 text: modelData.status
                                                                 color: libraryController.showInstalled
                                                                        ? (modelData.managed ? "#78b894" : "#a8a8a8")
-                                                                       : (modelData.keyReady ? "#78b894" : "#d0ad68")
+                                                                       : (modelData.keyReady ? "#78b894" : "#e3b74a")
                                                                 font.pixelSize: 9
                                                                 font.weight: Font.DemiBold
                                                             }
@@ -1856,9 +1923,9 @@ ApplicationWindow {
                                                         Layout.alignment: Qt.AlignRight
                                                         text: modelData.keyStatus
                                                         color: !libraryController.showInstalled
-                                                               ? (modelData.keyReady ? "#78b894" : "#d0ad68")
+                                                               ? (modelData.keyReady ? "#78b894" : "#e3b74a")
                                                                : modelData.managed
-                                                               ? (modelData.keyReady ? "#78b894" : "#d0ad68")
+                                                               ? (modelData.keyReady ? "#78b894" : "#e3b74a")
                                                                : "#888888"
                                                         font.pixelSize: 10
                                                     }
@@ -1923,7 +1990,7 @@ ApplicationWindow {
                                               + (libraryController.selected.keySha256
                                                  ? "  •  SHA-256 " + libraryController.selected.keySha256
                                                  : "")
-                                        color: libraryController.selected.keyReady ? "#78b894" : "#d0ad68"
+                                        color: libraryController.selected.keyReady ? "#78b894" : "#e3b74a"
                                         font.pixelSize: 10
                                         elide: Text.ElideMiddle
                                     }
@@ -2110,7 +2177,7 @@ ApplicationWindow {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             Layout.minimumHeight: 220
-                            color: bulkDrop.containsDrag ? "#252525" : window.panel
+                            color: bulkDrop.containsDrag ? "#202025" : window.panel
                             border.color: bulkDrop.containsDrag ? window.accent : window.line
                             Behavior on color { ColorAnimation { duration: 100 } }
 
@@ -2153,7 +2220,7 @@ ApplicationWindow {
                                     required property bool itemInstalled
                                     width: bulkList.width
                                     height: 92
-                                    color: index % 2 ? "#202020" : "#222222"
+                                    color: index % 2 ? "#1b1b1f" : "#1d1d21"
 
                                     RowLayout {
                                         anchors.fill: parent
@@ -2197,7 +2264,7 @@ ApplicationWindow {
                                             Text {
                                                 Layout.fillWidth: true
                                                 text: bulkRow.itemDetail
-                                                color: bulkRow.itemTone === "error" ? "#d58a84" : "#777777"
+                                                color: bulkRow.itemTone === "error" ? "#e88780" : "#777777"
                                                 font.pixelSize: 10
                                                 elide: Text.ElideRight
                                                 ToolTip.visible: detailHover.containsMouse && truncated
@@ -2216,9 +2283,9 @@ ApplicationWindow {
                                             Layout.preferredHeight: 26
                                             radius: 13
                                             color: bulkRow.itemTone === "success" ? "#263c32"
-                                                 : bulkRow.itemTone === "error" ? "#482b29"
-                                                 : bulkRow.itemTone === "warning" ? "#443b25"
-                                                 : "#303030"
+                                                 : bulkRow.itemTone === "error" ? "#402424"
+                                                 : bulkRow.itemTone === "warning" ? "#3a3418"
+                                                 : "#2b2b31"
                                             Text {
                                                 id: statusText
                                                 anchors.centerIn: parent
@@ -2320,7 +2387,7 @@ ApplicationWindow {
                                 anchors.margins: 14
                                 spacing: 24
                                 ColumnLayout {
-                                    Layout.minimumWidth: 260
+                                    Layout.minimumWidth: 200
                                     Layout.preferredWidth: 300
                                     Layout.maximumWidth: 340
                                     Layout.fillHeight: true
@@ -2334,19 +2401,18 @@ ApplicationWindow {
                                         color: window.textPrimary
                                         selectByMouse: true
                                         onTextEdited: bulkController.setSuffix(text)
-                                        background: Rectangle { color: "#1b1b1b"; border.width: 1; border.color: bulkController.suffixError ? "#7b4641" : "#414141"; radius: 3 }
+                                        background: Rectangle { color: "#161619"; border.width: 1; border.color: bulkController.suffixError ? "#6f3835" : "#3a3a43"; radius: 3 }
                                     }
                                     Text {
                                         Layout.fillWidth: true
                                         text: bulkController.suffixError || "Example: com.studio.game + a → com.studio.gamea"
-                                        color: bulkController.suffixError ? "#d58a83" : "#777777"
+                                        color: bulkController.suffixError ? "#e88780" : "#777777"
                                         font.pixelSize: 9
                                         elide: Text.ElideRight
                                     }
                                 }
                                 Rectangle { Layout.preferredWidth: 1; Layout.fillHeight: true; color: window.line }
                                 ColumnLayout {
-                                    Layout.minimumWidth: 430
                                     Layout.fillWidth: true
                                     Layout.fillHeight: true
                                     spacing: 0
@@ -2464,7 +2530,7 @@ ApplicationWindow {
                                         Item { Layout.fillWidth: true }
                                         Text {
                                             text: toolController.allReady ? "READY" : "NEEDS ATTENTION"
-                                            color: toolController.allReady ? "#78b894" : "#d0ad68"
+                                            color: toolController.allReady ? "#78b894" : "#e3b74a"
                                             font.pixelSize: 9
                                             font.weight: Font.DemiBold
                                             font.letterSpacing: 0.6
@@ -2482,8 +2548,8 @@ ApplicationWindow {
                                                 Layout.preferredHeight: 7
                                                 radius: 4
                                                 color: modelData.status === "ready" ? "#70b18f"
-                                                     : modelData.status === "damaged" ? "#d4776f"
-                                                     : "#d0b15b"
+                                                     : modelData.status === "damaged" ? "#e5706a"
+                                                     : "#e3b74a"
                                             }
                                             Text {
                                                 Layout.maximumWidth: toolsColumn.width * 0.5
@@ -2516,7 +2582,7 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         thickness: toolController.isBusy ? 2 : 1
                                         value: toolController.isBusy ? toolController.progress : 0
-                                        color: "#333333"
+                                        color: "#2d2d34"
                                         fillColor: window.accent
                                     }
                                     RowLayout {
@@ -2531,9 +2597,9 @@ ApplicationWindow {
                                                       + (toolController.isBusy
                                                          ? "  " + Math.round(toolController.progress * 100) + "%"
                                                          : "")
-                                                color: toolController.tone === "error" ? "#d98a82"
+                                                color: toolController.tone === "error" ? "#e88780"
                                                      : toolController.tone === "success" ? "#78b894"
-                                                     : toolController.tone === "warning" ? "#d0ad68"
+                                                     : toolController.tone === "warning" ? "#e3b74a"
                                                      : window.textSecondary
                                                 font.pixelSize: 11
                                                 elide: Text.ElideRight
@@ -2590,6 +2656,82 @@ ApplicationWindow {
                                         checked: appController.settings.automaticPreflight
                                         onChanged: value => appController.setSetting("automatic_preflight", value)
                                     }
+                                    SettingRow {
+                                        Layout.fillWidth: true
+                                        title: "Also rename Java packages (legacy)"
+                                        detail: "Move code namespaces too. Refused automatically for apps whose native libraries bind to their Java classes"
+                                        checked: appController.settings.renameJavaPackages
+                                        onChanged: value => appController.setSetting("rename_java_packages", value)
+                                    }
+                                    SettingRow {
+                                        Layout.fillWidth: true
+                                        title: "Change display name of renamed copies (experimental)"
+                                        detail: "May cause errors in some apps. Adds a Display name field to the Dashboard and a default suffix below"
+                                        checked: appController.settings.changeDisplayName
+                                        onChanged: value => appController.setSetting("change_display_name", value)
+                                    }
+                                    RowLayout {
+                                        visible: appController.settings.changeDisplayName
+                                        Layout.fillWidth: true
+                                        Layout.minimumHeight: 64
+                                        Layout.preferredHeight: Math.max(64, implicitHeight + 12)
+                                        spacing: 10
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 3
+                                            Text {
+                                                text: "Display-name suffix"
+                                                color: "#e2e2e2"
+                                                font.pixelSize: 13
+                                                font.weight: Font.Medium
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: appController.settings.labelSuffix
+                                                      ? "Copies appear as “Game " + appController.settings.labelSuffix + "” — may cause errors in some apps"
+                                                      : "No suffix: copies keep the original name unless a Display name is typed on the Dashboard"
+                                                color: appController.settings.labelSuffix ? "#e3b74a" : "#8a8a8a"
+                                                font.pixelSize: 11
+                                                wrapMode: Text.WordWrap
+                                            }
+                                        }
+                                        Repeater {
+                                            model: ["(Dev)", "(Test)", "2"]
+                                            delegate: AppButton {
+                                                required property string modelData
+                                                text: modelData
+                                                implicitHeight: 30
+                                                leftPadding: 9
+                                                rightPadding: 9
+                                                font.pixelSize: 11
+                                                primary: appController.settings.labelSuffix === modelData
+                                                onClicked: appController.setLabelSuffix(
+                                                    appController.settings.labelSuffix === modelData ? "" : modelData)
+                                            }
+                                        }
+                                        TextField {
+                                            id: labelSuffixField
+                                            Layout.preferredWidth: 110
+                                            Layout.preferredHeight: 30
+                                            text: appController.settings.labelSuffix
+                                            placeholderText: "none"
+                                            color: window.textPrimary
+                                            font.pixelSize: 12
+                                            selectByMouse: true
+                                            leftPadding: 9
+                                            rightPadding: 9
+                                            onEditingFinished: {
+                                                if (text !== appController.settings.labelSuffix)
+                                                    appController.setLabelSuffix(text)
+                                            }
+                                            background: Rectangle {
+                                                radius: 3
+                                                color: "#131316"
+                                                border.width: 1
+                                                border.color: labelSuffixField.activeFocus ? window.accent : "#3e3e48"
+                                            }
+                                        }
+                                    }
                                     RowLayout {
                                         Layout.fillWidth: true
                                         Layout.preferredHeight: 64
@@ -2642,9 +2784,9 @@ ApplicationWindow {
                                             }
                                             background: Rectangle {
                                                 radius: 3
-                                                color: "#181818"
+                                                color: "#131316"
                                                 border.width: 1
-                                                border.color: defaultTagField.activeFocus ? window.accent : "#454545"
+                                                border.color: defaultTagField.activeFocus ? window.accent : "#3e3e48"
                                             }
                                         }
                                     }
@@ -2716,7 +2858,7 @@ ApplicationWindow {
                                             Layout.fillWidth: true
                                             text: updateController.status
                                             color: updateController.tone === "success" ? "#78b894"
-                                                 : updateController.tone === "warning" ? "#d0ad68"
+                                                 : updateController.tone === "warning" ? "#e3b74a"
                                                  : window.textSecondary
                                             font.pixelSize: 11
                                             elide: Text.ElideRight
@@ -2768,9 +2910,9 @@ ApplicationWindow {
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 32
                                             radius: 3
-                                            color: defaultBackupMouse.containsMouse ? "#282828" : "#232323"
+                                            color: defaultBackupMouse.containsMouse ? "#232328" : "#1e1e22"
                                             border.width: 1
-                                            border.color: defaultBackupMouse.containsMouse ? "#505050" : "#383838"
+                                            border.color: defaultBackupMouse.containsMouse ? "#494954" : "#32323a"
                                             Text {
                                                 anchors.left: parent.left
                                                 anchors.right: parent.right
@@ -2893,9 +3035,9 @@ ApplicationWindow {
                                             onAccepted: appController.connectWireless(text)
                                             background: Rectangle {
                                                 radius: 3
-                                                color: "#181818"
+                                                color: "#131316"
                                                 border.width: 1
-                                                border.color: wirelessField.activeFocus ? window.accent : "#454545"
+                                                border.color: wirelessField.activeFocus ? window.accent : "#3e3e48"
                                             }
                                         }
                                         AppButton {
@@ -2921,9 +3063,9 @@ ApplicationWindow {
                                         Layout.topMargin: 4
                                         Layout.preferredHeight: savedColumn.implicitHeight + 2
                                         radius: 4
-                                        color: "#1a1a1a"
+                                        color: "#151518"
                                         border.width: 1
-                                        border.color: "#353535"
+                                        border.color: "#2f2f36"
                                         ColumnLayout {
                                             id: savedColumn
                                             anchors.left: parent.left
@@ -2964,7 +3106,7 @@ ApplicationWindow {
                                                     onClicked: appController.forgetAllWirelessDevices()
                                                 }
                                             }
-                                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#2f2f2f" }
+                                            Rectangle { Layout.fillWidth: true; Layout.preferredHeight: 1; color: "#2a2a30" }
                                             Text {
                                                 visible: appController.savedWirelessDevices.length === 0
                                                 Layout.fillWidth: true
@@ -2984,7 +3126,7 @@ ApplicationWindow {
                                                                                        && appController.currentSerial === modelData.address
                                                     Layout.fillWidth: true
                                                     Layout.preferredHeight: 56
-                                                    color: index % 2 ? "#1c1c1c" : "transparent"
+                                                    color: index % 2 ? "#17171a" : "transparent"
                                                     RowLayout {
                                                         anchors.fill: parent
                                                         anchors.leftMargin: 12
@@ -2994,7 +3136,7 @@ ApplicationWindow {
                                                             Layout.preferredWidth: 30
                                                             Layout.preferredHeight: 30
                                                             radius: 15
-                                                            color: savedRow.isCurrent ? "#25382f" : "#2a2a2a"
+                                                            color: savedRow.isCurrent ? "#25382f" : "#25252b"
                                                             IconImage {
                                                                 anchors.centerIn: parent
                                                                 width: 14; height: 14
@@ -3027,10 +3169,10 @@ ApplicationWindow {
                                                                     }
                                                                     background: Rectangle {
                                                                         radius: 3
-                                                                        color: savedLabel.activeFocus || savedLabel.hovered ? "#181818" : "transparent"
+                                                                        color: savedLabel.activeFocus || savedLabel.hovered ? "#131316" : "transparent"
                                                                         border.width: 1
                                                                         border.color: savedLabel.activeFocus ? window.accent
-                                                                                    : savedLabel.hovered ? "#3a3a3a" : "transparent"
+                                                                                    : savedLabel.hovered ? "#34343c" : "transparent"
                                                                     }
                                                                     ToolTip.visible: hovered && !activeFocus
                                                                     ToolTip.delay: 600
@@ -3110,9 +3252,9 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         visible: appController.wirelessStatus.length > 0
                                         text: appController.wirelessStatus
-                                        color: appController.wirelessTone === "error" ? "#d98a82"
+                                        color: appController.wirelessTone === "error" ? "#e88780"
                                              : appController.wirelessTone === "success" ? "#78b894"
-                                             : appController.wirelessTone === "warning" ? "#d0ad68"
+                                             : appController.wirelessTone === "warning" ? "#e3b74a"
                                              : window.textSecondary
                                         font.pixelSize: 11
                                         wrapMode: Text.WordWrap

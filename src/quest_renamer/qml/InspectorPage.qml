@@ -7,9 +7,9 @@ Item {
     objectName: "inspectorPage"
     property color textPrimary: "#eeeeee"
     property color textSecondary: "#939393"
-    property color line: "#353535"
-    property color panel: "#1f1f1f"
-    property color accent: "#4c8abb"
+    property color line: "#2f2f36"
+    property color panel: "#1a1a1e"
+    property color accent: "#4b90cc"
     property int pageMargin: 30
     property int tabIndex: 0
 
@@ -96,7 +96,7 @@ Item {
             Layout.fillWidth: true
             Layout.preferredHeight: 92
             radius: 3
-            color: inspectorDrop.containsDrag ? "#252525" : root.panel
+            color: inspectorDrop.containsDrag ? "#202025" : root.panel
             border.width: 1
             border.color: inspectorDrop.containsDrag ? root.accent : root.line
             Behavior on color { ColorAnimation { duration: 100 } }
@@ -145,14 +145,14 @@ Item {
                         implicitHeight: 25
                         radius: 12
                         color: inspectorController.signerTone === "success" ? "#263c32"
-                             : inspectorController.signerTone === "warning" ? "#443b25"
-                             : "#303030"
+                             : inspectorController.signerTone === "warning" ? "#3a3418"
+                             : "#2b2b31"
                         Text {
                             id: signerText
                             anchors.centerIn: parent
                             text: inspectorController.signerLabel
                             color: inspectorController.signerTone === "success" ? "#a8d3b9"
-                                 : inspectorController.signerTone === "warning" ? "#d9c27c"
+                                 : inspectorController.signerTone === "warning" ? "#e8c45c"
                                  : "#b5b5b5"
                             font.pixelSize: 10
                             font.weight: Font.Medium
@@ -175,8 +175,8 @@ Item {
                              ? "  " + Math.round(inspectorController.progress * 100) + "%"
                              : "")
                     color: inspectorController.tone === "success" ? "#70b18f"
-                         : inspectorController.tone === "warning" ? "#d0b15b"
-                         : inspectorController.tone === "error" ? "#d4776f"
+                         : inspectorController.tone === "warning" ? "#e3b74a"
+                         : inspectorController.tone === "error" ? "#e5706a"
                          : "#888888"
                     font.pixelSize: 10
                     elide: Text.ElideRight
@@ -210,7 +210,7 @@ Item {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 42
                     visible: inspectorController.hasAnalysis
-                    background: Rectangle { color: "#1c1c1c" }
+                    background: Rectangle { color: "#17171a" }
                     // One-directional: the page owns tabIndex; the bar follows and reports clicks.
                     Binding { target: tabs; property: "currentIndex"; value: root.tabIndex }
                     onCurrentIndexChanged: if (root.tabIndex !== currentIndex) root.tabIndex = currentIndex
@@ -230,7 +230,7 @@ Item {
                                 verticalAlignment: Text.AlignVCenter
                             }
                             background: Rectangle {
-                                color: tabButton.checked ? "#252525" : "transparent"
+                                color: tabButton.checked ? "#202025" : "transparent"
                                 Rectangle {
                                     anchors.left: parent.left
                                     anchors.right: parent.right
@@ -355,7 +355,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 36
-                            color: "#1c1c1c"
+                            color: "#17171a"
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 14
@@ -379,7 +379,7 @@ Item {
                                 required property int index
                                 width: ListView.view.width
                                 height: 36
-                                color: index % 2 ? "#202020" : "#222222"
+                                color: index % 2 ? "#1b1b1f" : "#1d1d21"
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: 14
@@ -397,7 +397,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: inspectorController.nativeWarning ? 70 : 48
-                            color: "#1c1c1c"
+                            color: "#17171a"
                             ColumnLayout {
                                 anchors.fill: parent
                                 anchors.margins: 12
@@ -407,7 +407,7 @@ Item {
                                     Layout.fillWidth: true
                                     visible: inspectorController.nativeWarning
                                     text: inspectorController.nativeWarning
-                                    color: "#d0b15b"
+                                    color: "#e3b74a"
                                     font.pixelSize: 9
                                     wrapMode: Text.WordWrap
                                 }
@@ -416,7 +416,7 @@ Item {
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 34
-                            color: "#222222"
+                            color: "#1d1d21"
                             RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 14
@@ -440,14 +440,14 @@ Item {
                                 required property int index
                                 width: ListView.view.width
                                 height: 36
-                                color: index % 2 ? "#202020" : "#222222"
+                                color: index % 2 ? "#1b1b1f" : "#1d1d21"
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: 14
                                     anchors.rightMargin: 14
                                     Text {
                                         text: referenceRow.modelData.action
-                                        color: referenceRow.modelData.action === "Update" ? "#70b18f" : "#d0b15b"
+                                        color: referenceRow.modelData.action === "Update" ? "#70b18f" : "#e3b74a"
                                         font.pixelSize: 10
                                         font.weight: Font.Medium
                                         Layout.preferredWidth: 70

@@ -8,21 +8,49 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ### Fixed
 
-- Renamed copies of apps with their own native (JNI) code no longer crash at launch. The rewrite
-  now changes only the application ID (manifest `package`, provider authorities, custom
-  permissions, intent actions, and identity strings) and leaves every Java class name and
-  descriptor untouched, so `Java_<package>_…` exports and `FindClass` lookups in the game's
-  `.so` files still resolve. Relative manifest component names are expanded against the original
-  package first. Layout class names, `R` references, and reflection strings are preserved as well.
-- Bundles that ship a tag-less expansion file such as `patch.com.Cyborn.Hubris.obb` next to a
-  versioned `main.<version>.<package>.obb` are accepted, renamed, installed, and pruned correctly
-  instead of being rejected as "unsupported files".
+- Renamed copies of apps with their own native code no longer crash at launch. Only the
+  application ID is rewritten now; Java class names are left alone so the game's `.so` files can
+  still find them.
+- Bundles with a tag-less `patch.<package>.obb` next to `main.<version>.<package>.obb` are
+  accepted instead of being rejected as unsupported.
+- Install: cancelling during the final cleanup no longer deletes the just-verified OBB; a failed
+  multi-OBB install reports every OBB it removed so "Retry failed OBBs" restores all of them;
+  cancelling mid-activation restores the original OBB; an OBB parked by an interrupted install is
+  restored on the next run; retries clean their staged files; a remote file the bundle still needs
+  is never reused for another entry; the progress bar no longer jumps backwards.
+- Install: transfer timeouts scale with file size (large OBBs over wireless ADB no longer time out
+  at 30 minutes); the first `adb devices` call waits up to 20 s for the server.
+- Device detection: ADB server messages are no longer parsed as an offline device; Quest product
+  codes with underscores are recognized; a refresh requested during a poll runs afterwards.
+- Signing: legacy key migration works when the signing folder already contains app icons or
+  imported identities; restoring a key backup keeps app icons and imported identities.
+- A failed direct Library update can be retried; the elapsed timer stops after a build; the
+  update checker runs when re-enabled and retries after a network error; pasted paths with quotes
+  or a `file://` prefix work; a settings save whose backup copy fails is no longer reported as
+  rejected; exporting the log onto itself is refused; bulk items with a bad output folder fail
+  alone instead of stopping the queue.
+- Component classes with unusual names (`.NDK`, obfuscated `.a.b`), `PARENT_ACTIVITY` meta-data,
+  `<queries>` entries and `android:targetPackage` are kept intact; the package inside an OBB
+  filename is rewritten consistently.
+- Build errors after the output folder is published are logged instead of reported as a failed
+  build.
+
+### Added
+
+- Settings ▸ "Change display name of renamed copies" (experimental, off by default): a Display
+  name field on the Dashboard and a default suffix such as `(Dev)`. Off means nothing changes.
+- Settings ▸ "Also rename Java packages (legacy)": the old behaviour, refused automatically when
+  native code binds to the app's classes.
+- Quitting while a build, install, bulk run or tool download is running asks for confirmation.
+- Build reports list application-ID references changed, Java class references kept, and JNI
+  libraries found.
 
 ### Changed
 
-- Reference scanning is 30× faster on large decodes (the regexes now lead with the literal
-  package so Python's prefix scan applies). Build reports and the Inspector list application-ID
-  references changed and Java class references kept separately.
+- Darker, cooler colour palette; better contrast for captions and hints.
+- Reference scanning on large decodes is about 30x faster.
+- Bulk queue options and the Library header fit the minimum window size; disabled buttons show
+  their tooltip; keyboard focus scrolls Dashboard and Settings to the focused control.
 
 ## [1.4.6] - 2026-08-22
 

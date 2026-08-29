@@ -19,7 +19,9 @@ from quest_renamer.domain.package_ids import is_valid_package_id
 from quest_renamer.infrastructure.reference_scanner import (
     MAX_SCAN_SIZE,
     PackagePatterns,
+    collect_java_paths,
     count_file_patterns,
+    find_jni_libraries,
     is_technical_file,
     iter_decoded_files,
 )
@@ -38,6 +40,15 @@ _CLASS_ATTRIBUTE = re.compile(
     r'(\bandroid:(?:targetActivity|parentActivityName|backupAgent|appComponentFactory'
     r'|zygotePreloadName)=")([^"]*)(")'
 )
+# <meta-data android:name="android.support.PARENT_ACTIVITY" android:value=".Parent"/>
+_META_DATA_ELEMENT = re.compile(r"<meta-data\b[^>]*>", re.DOTALL)
+_PARENT_ACTIVITY_NAMES = {"android.support.PARENT_ACTIVITY", "androidx.core.PARENT_ACTIVITY"}
+_VALUE_ATTRIBUTE = re.compile(r'(\bandroid:value=")([^"]*)(")')
+# Values that name *other* packages or classes and must never be rewritten.
+_QUERIES_BLOCK = re.compile(r"<queries\b.*?</queries>", re.DOTALL)
+_PACKAGE_NAME_ELEMENT = re.compile(r'(<package\b[^>]*\bandroid:name=")([^"]*)(")')
+_TARGET_PACKAGE = re.compile(r'(\bandroid:targetPackage=")([^"]*)(")')
+_PLACEHOLDER = re.compile(rb"\x00(\d+)\x00")
 
 
 def qualify_class_name(value: str, package: str) -> str:
@@ -76,9 +87,61 @@ def qualify_manifest_components(text: str, package: str) -> tuple[str, int]:
     def fix_element(match: re.Match[str]) -> str:
         return _NAME_ATTRIBUTE.sub(qualify, match.group(0))
 
+    def fix_meta_data(match: re.Match[str]) -> str:
+        element = match.group(0)
+        name = _NAME_ATTRIBUTE.search(element)
+        if name is None or name.group(2) not in _PARENT_ACTIVITY_NAMES:
+            return element
+        return _VALUE_ATTRIBUTE.sub(qualify, element)
+
     text = _COMPONENT_ELEMENT.sub(fix_element, text)
     text = _CLASS_ATTRIBUTE.sub(qualify, text)
+    text = _META_DATA_ELEMENT.sub(fix_meta_data, text)
     return text, expanded
+
+
+def protect_manifest_values(text: str, package: str) -> tuple[str, list[str]]:
+    """Replace class names and foreign package names with placeholders.
+
+    Component classes (whatever their shape: ``.NDK``, ``.a.b``), class-valued
+    attributes, ``PARENT_ACTIVITY`` meta-data, ``<queries><package>`` entries and
+    ``android:targetPackage`` (unless it is the app itself) keep their exact text.
+    ``restore_manifest_values`` puts them back after the identity rewrite.
+    """
+    saved: list[str] = []
+
+    def keep(match: re.Match[str]) -> str:
+        saved.append(match.group(2))
+        return f"{match.group(1)}\x00{len(saved) - 1}\x00{match.group(3)}"
+
+    def keep_component(match: re.Match[str]) -> str:
+        return _NAME_ATTRIBUTE.sub(keep, match.group(0))
+
+    def keep_meta_data(match: re.Match[str]) -> str:
+        element = match.group(0)
+        name = _NAME_ATTRIBUTE.search(element)
+        if name is None or name.group(2) not in _PARENT_ACTIVITY_NAMES:
+            return element
+        return _VALUE_ATTRIBUTE.sub(keep, element)
+
+    def keep_foreign_package(match: re.Match[str]) -> str:
+        if match.group(2) == package:
+            return match.group(0)
+        return keep(match)
+
+    def keep_queries(match: re.Match[str]) -> str:
+        return _PACKAGE_NAME_ELEMENT.sub(keep_foreign_package, match.group(0))
+
+    text = _COMPONENT_ELEMENT.sub(keep_component, text)
+    text = _CLASS_ATTRIBUTE.sub(keep, text)
+    text = _META_DATA_ELEMENT.sub(keep_meta_data, text)
+    text = _QUERIES_BLOCK.sub(keep_queries, text)
+    text = _TARGET_PACKAGE.sub(keep_foreign_package, text)
+    return text, saved
+
+
+def restore_manifest_values(data: bytes, saved: list[str]) -> bytes:
+    return _PLACEHOLDER.sub(lambda m: saved[int(m.group(1))].encode("utf-8"), data)
 
 
 def replace_package_references(
@@ -88,19 +151,36 @@ def replace_package_references(
     *,
     token: CancellationToken,
     log: Callable[[str], None] | None = None,
+    rename_java_packages: bool = False,
 ) -> PackageRewriteReport:
     """Rewrite identity references to ``old`` inside Android technical files.
 
     Java namespace references (class descriptors, paths, and dotted class names)
-    are counted but never modified; game data (assets, native libraries, compiled
-    code) is scanned and reported but never modified. Token boundaries guarantee
-    that ``com.example.gamepad`` is left alone when ``com.example.game`` is renamed.
+    are counted but never modified unless ``rename_java_packages`` is set, and that
+    legacy mode is refused when a native library exports JNI methods for the
+    package. Game data (assets, native libraries, compiled code) is scanned and
+    reported but never modified. Token boundaries guarantee that
+    ``com.example.gamepad`` is left alone when ``com.example.game`` is renamed.
     """
     if not is_valid_package_id(old):
         raise ValueError("The source package ID is empty or invalid; nothing was rewritten.")
     if not is_valid_package_id(new):
         raise ValueError("The new package ID is empty or invalid; nothing was rewritten.")
-    patterns = PackagePatterns.for_package(old)
+    patterns = PackagePatterns.for_package(old, collect_java_paths(decoded, old))
+    jni_libraries = find_jni_libraries(decoded, old, token)
+    if rename_java_packages and jni_libraries:
+        raise ValueError(
+            "Renaming the Java packages would break this app: its native code binds to "
+            f"classes in {old} ({', '.join(jni_libraries[:3])}"
+            + (f" and {len(jni_libraries) - 3} more" if len(jni_libraries) > 3 else "")
+            + "). Turn off “Also rename Java packages” in Settings and build again."
+        )
+    if jni_libraries and log:
+        count = len(jni_libraries)
+        log(
+            f"{count} native {'library exports' if count == 1 else 'libraries export'} "
+            f"JNI methods for {old}; Java class names are kept so they still bind."
+        )
     changed_files = 0
     changed_occurrences = 0
     namespace_references = 0
@@ -116,12 +196,19 @@ def replace_package_references(
                 data = path.read_bytes()
             except OSError:
                 continue
+            saved: list[str] = []
             if relative == MANIFEST_NAME:
                 text, qualified_components = qualify_manifest_components(
                     data.decode("utf-8", errors="surrogateescape"), old
                 )
+                if not rename_java_packages:
+                    text, saved = protect_manifest_values(text, old)
                 data = text.encode("utf-8", errors="surrogateescape")
-            updated, occurrences, namespace = patterns.rewrite(data, new)
+            updated, occurrences, namespace = patterns.rewrite(
+                data, new, namespace=rename_java_packages
+            )
+            if saved:
+                updated = restore_manifest_values(updated, saved)
             namespace_references += namespace
             if not occurrences and not (relative == MANIFEST_NAME and qualified_components):
                 continue
@@ -135,12 +222,18 @@ def replace_package_references(
         preserved.append(relative)
 
     if log:
-        log(
-            f"Updated {changed_occurrences} application-ID reference(s) in "
-            f"{changed_files} Android technical file(s); "
-            f"{namespace_references} Java class reference(s) kept for native-code "
-            "compatibility."
-        )
+        if rename_java_packages:
+            log(
+                f"Updated {changed_occurrences} package reference(s), Java packages "
+                f"included, in {changed_files} Android technical file(s)."
+            )
+        else:
+            log(
+                f"Updated {changed_occurrences} application-ID reference(s) in "
+                f"{changed_files} Android technical file(s); "
+                f"{namespace_references} Java class reference(s) kept for native-code "
+                "compatibility."
+            )
         if qualified_components:
             log(
                 f"Expanded {qualified_components} relative component name(s) in the "
@@ -158,4 +251,6 @@ def replace_package_references(
         preserved_files=tuple(preserved),
         namespace_references=namespace_references,
         qualified_components=qualified_components,
+        jni_libraries=jni_libraries,
+        java_packages_renamed=rename_java_packages,
     )

@@ -591,6 +591,8 @@ class BulkController(QObject):
                 )
             except (BundleSelectionError, OSError, ValueError) as exc:
                 errors.append(f"{root.name}: {exc}")
+            except Exception as exc:  # a broken adapter must not wedge the queue
+                errors.append(f"{root.name}: unexpected error: {exc}")
         self.entriesReady.emit(tuple(additions), tuple(errors))
 
     @Slot(object, object)
@@ -661,11 +663,24 @@ class BulkController(QObject):
                 row,
                 replace(entry, status="Building", detail="Preparing…", tone="active"),
             )
-            output = (
-                entry.source.root
-                if self._replace_sources
-                else self._unique_output(default_output_folder(entry.source.root))
-            )
+            try:
+                output = (
+                    entry.source.root
+                    if self._replace_sources
+                    else self._unique_output(default_output_folder(entry.source.root))
+                )
+            except OSError as exc:
+                # A bad output location must fail this item, not abandon the queue.
+                self.itemReady.emit(
+                    row,
+                    replace(
+                        entry,
+                        status="Failed",
+                        detail=f"Output folder unavailable: {exc}",
+                        tone="error",
+                    ),
+                )
+                continue
             request = BuildRequest(
                 source=entry.source,
                 package_name=entry.target_package,
@@ -676,6 +691,10 @@ class BulkController(QObject):
                 if settings.older_firmware_patch and entry.has_legacy_loader
                 else (),
                 replace_source=self._replace_sources,
+                app_label_suffix=(
+                    settings.label_suffix if settings.change_display_name else ""
+                ),
+                rename_java_packages=settings.rename_java_packages,
             )
             try:
                 preflight = self._preflight_service.check(

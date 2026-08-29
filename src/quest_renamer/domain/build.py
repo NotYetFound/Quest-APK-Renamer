@@ -16,6 +16,13 @@ class PackageRewriteReport:
     namespace_references: int = 0
     # Relative manifest component names expanded against the original package.
     qualified_components: int = 0
+    # Native libraries exporting JNI methods for the original package.
+    jni_libraries: tuple[str, ...] = ()
+    # Legacy mode: the Java namespace was moved along with the application ID.
+    java_packages_renamed: bool = False
+    # Display-name change, when one was requested and applied.
+    label_before: str = ""
+    label_after: str = ""
 
 
 @dataclass(frozen=True, slots=True)

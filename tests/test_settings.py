@@ -90,5 +90,15 @@ class SettingsTests(unittest.TestCase):
             settings.with_value("dismissed_update", True)
 
 
+class DisplayNameGateTests(unittest.TestCase):
+    def test_display_name_feature_is_off_by_default(self) -> None:
+        from quest_renamer.domain.settings import AppSettings
+
+        settings = AppSettings()
+        self.assertFalse(settings.change_display_name)
+        self.assertEqual(settings.label_suffix, "")
+        self.assertFalse(settings.rename_java_packages)
+
+
 if __name__ == "__main__":
     unittest.main()

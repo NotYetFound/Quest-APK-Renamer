@@ -99,6 +99,10 @@ Domain models          Infrastructure adapters
   bind to Java classes by their original names (`Java_com_example_game_Main_init` exports and
   `FindClass`). Relative manifest component names are expanded against the original package
   first so they keep pointing at those classes (`infrastructure/package_rewriter.py`).
+- Native libraries are scanned for the JNI export prefix (`Java_<mangled package>_`). The
+  legacy "also rename Java packages" mode is refused when any is found; the default mode records
+  them in the report. An optional display name / suffix is applied to the manifest label or the
+  referenced `<string>` in every `values*` folder (`infrastructure/app_label.py`).
 - Scan patterns start with the literal package so `re` can use its prefix scan; boundary
   look-behind is checked in Python. This keeps 400 MB decodes under a second instead of ~30 s.
 - The installer prunes obsolete OBBs only when the bundle supplied the complete OBB set (or a

@@ -196,6 +196,7 @@ class AppController(QObject):
         self._settings = self._settings_store.load()
         self._bundle: BundleDraft | None = None
         self._package_id = ""
+        self._app_label = ""
         self._analysis_state = "idle"
         self._analysis_progress = 0.0
         self._analysis_message = ""
@@ -252,6 +253,7 @@ class AppController(QObject):
             detail="Looking for a connected headset.",
         )
         self._device_check_running = False
+        self._device_refresh_pending = False
         self._wireless_busy = False
         self._wireless_status = ""
         self._wireless_tone = "neutral"
@@ -339,7 +341,7 @@ class AppController(QObject):
             and self._package_id == self._direct_library_update_package
             and self._bundle.package_name == self._direct_library_update_package
             and self._build_state != "running"
-            and self._install_state == "idle"
+            and self._install_state in {"idle", "failed"}
             and not self._signing_busy
             and not self._external_busy_provider()
         )
@@ -744,6 +746,31 @@ class AppController(QObject):
         self._refresh_preflight()
 
     @Property(str, notify=packageIdChanged)
+    def displayNamePreview(self) -> str:
+        """Ghost text for the Display name field: the game's name plus the suffix."""
+        name = (self._bundle.game_name if self._bundle is not None else "") or "Game name"
+        suffix = self._settings.label_suffix.strip()
+        return f"{name} {suffix}" if suffix else name
+
+    @Property(str, notify=packageIdChanged)
+    def appLabel(self) -> str:
+        """Optional display name for the copy; empty keeps the original (plus suffix)."""
+        return self._app_label
+
+    @Slot(str)
+    def setAppLabel(self, value: str) -> None:
+        if self._build_state == "running":
+            return
+        value = value.strip()
+        if value == self._app_label:
+            return
+        self._app_label = value
+        if self._build_result is not None:
+            self._reset_build_presentation()
+            self.readinessChanged.emit()
+        self.packageIdChanged.emit()
+
+    @Property(str, notify=packageIdChanged)
     def packageError(self) -> str:
         return self._package_error()
 
@@ -887,6 +914,9 @@ class AppController(QObject):
             "keyBackupFolder": self._settings.key_backup_folder,
             "dismissedUpdate": self._settings.dismissed_update,
             "defaultTag": self._settings.default_tag,
+            "changeDisplayName": self._settings.change_display_name,
+            "labelSuffix": self._settings.label_suffix,
+            "renameJavaPackages": self._settings.rename_java_packages,
             "preferredDeviceSerial": self._settings.preferred_device_serial,
             "lastWirelessAddress": self._settings.last_wireless_address,
         }
@@ -1046,8 +1076,12 @@ class AppController(QObject):
     @Slot()
     def refreshDevice(self) -> None:
         if self._device_check_running:
+            # The in-flight snapshot predates whatever just changed (device choice,
+            # wireless connect); poll again as soon as it lands.
+            self._device_refresh_pending = True
             return
         self._device_check_running = True
+        self._device_refresh_pending = False
         threading.Thread(target=self._device_worker, daemon=True).start()
 
     def _device_worker(self) -> None:
@@ -1064,6 +1098,10 @@ class AppController(QObject):
     @Slot(object)
     def _apply_device_snapshot(self, snapshot: object) -> None:
         self._device_check_running = False
+        if self._device_refresh_pending:
+            self._device_refresh_pending = False
+            self.refreshDevice()
+            return
         if not isinstance(snapshot, DeviceSnapshot):
             return
         previous = (self._device.status, self._device.serial)
@@ -1378,6 +1416,7 @@ class AppController(QObject):
         if self._bundle is not None and self._bundle.root.resolve() == output.root:
             self._bundle = None
             self._package_id = ""
+            self._app_label = ""
             self._analysis_state = "idle"
             self._preflight = None
             self.bundleChanged.emit()
@@ -1393,9 +1432,13 @@ class AppController(QObject):
 
     @Slot(str)
     def chooseFolderPath(self, value: str) -> None:
-        value = value.strip()
-        if value:
-            self.chooseFolder(QUrl.fromLocalFile(value))
+        value = value.strip().strip("\"'")
+        if not value:
+            return
+        if value.startswith("file:"):
+            self.chooseFolder(QUrl(value))
+            return
+        self.chooseFolder(QUrl.fromLocalFile(value))
 
     @Slot(str)
     def prepareLibraryUpdate(self, entry_id: str) -> None:
@@ -1507,6 +1550,7 @@ class AppController(QObject):
         self._matched_library_profile_id = ""
         self._direct_library_update_package = ""
         self._package_id = self._suggested_package(bundle.package_name)
+        self._app_label = ""
         self.bundleChanged.emit()
         self.outputChanged.emit()
         self.packageIdChanged.emit()
@@ -1633,6 +1677,7 @@ class AppController(QObject):
         except BundleSelectionError as exc:
             self._analysis_state = "error"
             self._analysis_progress = 0.0
+            self._sync_elapsed_timer()
             self._set_notice(str(exc), "error")
             self._record_event(
                 "ANALYSIS",
@@ -1655,6 +1700,7 @@ class AppController(QObject):
             signer_lineage=result.signer_lineage,
         )
         self._package_id = self._suggested_package(result.package_name)
+        self._app_label = ""
         library_handled = self._restore_library_identity(result.package_name)
         self._analysis_state = "ready"
         self._analysis_progress = 1.0
@@ -1715,6 +1761,21 @@ class AppController(QObject):
             return
         self._set_notice(f"New games will be suggested with the .{tag} tag.", "success")
         self._record_activity(f"Default app ID tag set: .{tag}")
+
+    @Slot(str)
+    def setLabelSuffix(self, value: str) -> None:
+        suffix = " ".join(value.split())
+        if suffix == self._settings.label_suffix:
+            self.settingsChanged.emit()
+            return
+        if not self._commit_settings(self._settings.with_value("label_suffix", suffix)):
+            return
+        self.packageIdChanged.emit()  # the Display name ghost text shows the suffix
+        if suffix:
+            self._set_notice(f"Renamed copies will be shown as “Game {suffix}”.", "success")
+        else:
+            self._set_notice("Renamed copies keep the original display name.", "success")
+        self._record_activity(f"Display-name suffix set: {suffix!r}")
 
     @Property(list, notify=deviceChanged)
     def deviceChoices(self) -> list[dict[str, str]]:
@@ -2140,6 +2201,11 @@ class AppController(QObject):
             replace_source=self._settings.replace_source_after_build,
             signing_keystore=signing_keystore,
             signing_metadata=signing_metadata,
+            app_label=self._app_label if self._settings.change_display_name else "",
+            app_label_suffix=(
+                self._settings.label_suffix if self._settings.change_display_name else ""
+            ),
+            rename_java_packages=self._settings.rename_java_packages,
         )
 
     @Slot()
@@ -2455,6 +2521,7 @@ class AppController(QObject):
                 ),
             )
         else:
+            full_bundle = self._retry_full_bundle
             self._retry_bundle = None
             self._retry_full_bundle = None
             assert raw_outcome.result is not None
@@ -2462,6 +2529,9 @@ class AppController(QObject):
             self._install_progress = 1.0
             self._last_failure_report = None
             obb_count = len(raw_outcome.result.obbs)
+            if full_bundle is not None:
+                # A retry re-sends only the failed subset; report the whole game.
+                obb_count = max(obb_count, len(full_bundle.obbs))
             uploaded_obbs = sum(item.action == "uploaded" for item in raw_outcome.result.obbs)
             reused_obbs = sum(
                 item.action == "renamed on Quest" for item in raw_outcome.result.obbs
@@ -2696,6 +2766,7 @@ class AppController(QObject):
         ):
             self._bundle = None
             self._package_id = ""
+            self._app_label = ""
             self._analysis_state = "idle"
             self._preflight = None
             self.bundleChanged.emit()
@@ -2977,11 +3048,11 @@ class AppController(QObject):
         self._active_build_request = None
         self._built_request = completed_request
         self._build_result = raw_outcome.result
-        self._sync_elapsed_timer()
         self._last_failure_report = None
         self._build_state = "complete"
         self._build_progress = 1.0
         self._build_message = "Build complete"
+        self._sync_elapsed_timer()
         source_was_replaced = self._bundle is not None and (
             raw_outcome.result.output_root.resolve() == self._bundle.root.resolve()
         )
@@ -3148,6 +3219,7 @@ class AppController(QObject):
         self._build_generation += 1
         self._bundle = None
         self._package_id = ""
+        self._app_label = ""
         self._analysis_state = "idle"
         self._analysis_progress = 0.0
         self._preflight = None

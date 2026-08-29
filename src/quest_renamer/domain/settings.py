@@ -23,6 +23,13 @@ class AppSettings:
     last_output_parent: str = ""
     # Suggested package-ID tag (without the leading dot) for newly selected games.
     default_tag: str = "dev"
+    # Experimental: change the launcher name of renamed copies. Off by default and,
+    # while off, nothing about it appears outside Settings.
+    change_display_name: bool = False
+    # Appended to the display name of every renamed copy ("(Dev)"); empty keeps it.
+    label_suffix: str = ""
+    # Legacy rename mode: move Java packages too. Refused for apps with JNI code.
+    rename_java_packages: bool = False
     # Serial to use when more than one authorized device is attached.
     preferred_device_serial: str = ""
     # Last wireless ADB address (host:port) the user connected to.

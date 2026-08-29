@@ -55,6 +55,11 @@ class BuildRequest:
     replace_source: bool = False
     signing_keystore: Path | None = None
     signing_metadata: Path | None = None
+    # Optional display name for the copy; ``app_label`` wins over the suffix.
+    app_label: str = ""
+    app_label_suffix: str = ""
+    # Legacy: move Java packages too (refused when native code binds to them).
+    rename_java_packages: bool = False
 
 
 @dataclass(frozen=True, slots=True)

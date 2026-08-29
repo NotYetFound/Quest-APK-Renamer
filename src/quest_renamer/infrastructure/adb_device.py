@@ -32,11 +32,15 @@ def parse_adb_devices(output: str) -> tuple[AdbRecord, ...]:
         if len(fields) < 2:
             continue
         serial, state = fields[:2]
+        # Server chatter ("adb server version (41) doesn't match this client…",
+        # "adb: ...") is not a device.
+        if serial.lower() in {"adb", "adb.exe", "adb:"} or "server version" in stripped:
+            continue
         attributes: dict[str, str] = {}
         for field in fields[2:]:
             if ":" in field:
                 key, value = field.split(":", 1)
-                attributes[key] = value.replace("_", " ")
+                attributes[key] = value
         records.append(AdbRecord(serial, state, attributes, stripped))
     return tuple(records)
 
@@ -211,7 +215,9 @@ _QUEST_PRODUCTS = frozenset(
 
 
 def _device_label(record: AdbRecord) -> str:
-    model = record.attributes.get("model") or record.attributes.get("product") or ""
+    model = (record.attributes.get("model") or record.attributes.get("product") or "").replace(
+        "_", " "
+    )
     return f"{model} ({record.serial})" if model else record.serial
 
 
@@ -281,7 +287,7 @@ class AdbDeviceService:
         return self._resolved_adb
 
     def _command(
-        self, arguments: Sequence[str], timeout: int = 8
+        self, arguments: Sequence[str], timeout: int = 20
     ) -> subprocess.CompletedProcess[str]:
         creationflags = (
             int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
@@ -364,7 +370,7 @@ class AdbDeviceService:
         target = (str(adb), "-s", record.serial)
         model = self._models.get(record.serial, "")
         if not model:
-            model = record.attributes.get("model", "Quest")
+            model = record.attributes.get("model", "Quest").replace("_", " ")
             try:
                 model_result = self._command(
                     (*target, "shell", "getprop", "ro.product.model")

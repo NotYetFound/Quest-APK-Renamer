@@ -49,9 +49,9 @@ Popup {
 
     background: Rectangle {
         radius: 4
-        color: "#242424"
+        color: "#1f1f24"
         border.width: 1
-        border.color: "#4a4a4a"
+        border.color: "#43434d"
     }
 
     contentItem: ColumnLayout {
@@ -85,7 +85,7 @@ Popup {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: "#393939"
+            color: "#33333b"
         }
 
         RowLayout {

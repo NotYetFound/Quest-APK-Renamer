@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from quest_renamer.domain.installation import BundleInstallError, InstalledPackageConflict
 from quest_renamer.domain.models import BundleDraft
-from quest_renamer.domain.operations import CancellationToken
+from quest_renamer.domain.operations import CancellationToken, OperationCancelled
 from quest_renamer.infrastructure.adb_installer import AdbApkInstaller
 from quest_renamer.infrastructure.process_runner import CommandResult
 
@@ -586,6 +586,123 @@ class InstallSafetyTests(unittest.TestCase):
 
             self.assertTrue(raised.exception.apk_installed)
             self.assertEqual(raised.exception.failed_obbs, obbs)
+
+
+class CancellingQuestRunner(MemoryQuestRunner):
+    """Cancels ``token`` the first time a command matches ``trigger``."""
+
+    def __init__(
+        self, remote: dict[str, bytes], token: CancellationToken, trigger: str
+    ) -> None:
+        super().__init__(remote)
+        self.token = token
+        self.trigger = trigger
+        self.fired = False
+
+    def run(self, arguments: object, **kwargs: object) -> CommandResult:
+        result = super().run(arguments, **kwargs)
+        command = " ".join(str(value) for value in arguments)  # type: ignore[union-attr]
+        if not self.fired and self.trigger in command:
+            self.fired = True
+            self.token.cancel()
+        return result
+
+
+class InstallTransactionTests(unittest.TestCase):
+    def _files(self, root: Path, *names: str) -> tuple[Path, tuple[Path, ...]]:
+        (root / "adb").touch()
+        apk = root / "game.apk"
+        apk.write_bytes(b"apk")
+        obbs = []
+        for name in names:
+            path = root / name
+            path.write_bytes(f"new-{name}".encode())
+            obbs.append(path)
+        return apk, tuple(obbs)
+
+    def test_cancel_during_cleanup_keeps_the_verified_install(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            apk, obbs = self._files(root, "main.2.com.example.game.obb")
+            remote_path = "/sdcard/Android/obb/com.example.game/main.2.com.example.game.obb"
+            token = CancellationToken()
+            # Fire the cancel when the verified transaction removes its backup.
+            runner = CancellingQuestRunner({remote_path: b"old"}, token, "rm -f " + remote_path)
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, apk, obbs, package_name="com.example.game")
+
+            with patch.dict("os.environ", {"QAR_ADB": str(root / "adb")}):
+                result = installer.install_bundle(
+                    bundle, "QUEST123", allow_existing=True, token=token
+                )
+
+            self.assertTrue(result.package_verified)
+            self.assertEqual(runner.remote[remote_path], b"new-main.2.com.example.game.obb")
+            self.assertFalse(any(".qar-" in path for path in runner.remote))
+
+    def test_cancel_between_the_two_activation_moves_restores_the_original(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            apk, obbs = self._files(root, "main.2.com.example.game.obb")
+            remote_path = "/sdcard/Android/obb/com.example.game/main.2.com.example.game.obb"
+            token = CancellationToken()
+            runner = CancellingQuestRunner({remote_path: b"old"}, token, ".qar-old-")
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, apk, obbs, package_name="com.example.game")
+
+            with (
+                patch.dict("os.environ", {"QAR_ADB": str(root / "adb")}),
+                self.assertRaises((OperationCancelled, BundleInstallError)),
+            ):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True, token=token)
+
+            self.assertEqual(runner.remote, {remote_path: b"old"})
+
+    def test_rollback_after_activation_reports_every_removed_obb_for_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            apk, obbs = self._files(
+                root, "main.2.com.example.game.obb", "patch.2.com.example.game.obb"
+            )
+            runner = MemoryQuestRunner({}, corrupt_obb_after_install=True)
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, apk, obbs, package_name="com.example.game")
+
+            with (
+                patch.dict("os.environ", {"QAR_ADB": str(root / "adb")}),
+                self.assertRaises(BundleInstallError) as caught,
+            ):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            self.assertTrue(caught.exception.apk_installed)
+            self.assertEqual(set(caught.exception.failed_obbs), set(obbs))
+            self.assertFalse(any(path.endswith(".obb") for path in runner.remote))
+
+    def test_obb_parked_by_an_interrupted_install_is_restored_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            apk, obbs = self._files(root, "main.2.com.example.game.obb")
+            remote_root = "/sdcard/Android/obb/com.example.game"
+            parked = f"{remote_root}/main.2.com.example.game.obb.qar-old-abc123-1"
+            runner = MemoryQuestRunner({parked: b"old"})
+            installer = AdbApkInstaller(runner=runner)  # type: ignore[arg-type]
+            bundle = BundleDraft(root, apk, obbs, package_name="com.example.game")
+
+            with patch.dict("os.environ", {"QAR_ADB": str(root / "adb")}):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            self.assertIn(
+                ("shell", "mv", parked, f"{remote_root}/main.2.com.example.game.obb"),
+                [command[-4:] for command in runner.commands],
+            )
+            self.assertEqual(
+                runner.remote,
+                {
+                    f"{remote_root}/main.2.com.example.game.obb": (
+                        b"new-main.2.com.example.game.obb"
+                    )
+                },
+            )
 
 
 if __name__ == "__main__":

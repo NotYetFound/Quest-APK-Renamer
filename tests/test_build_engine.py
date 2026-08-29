@@ -33,10 +33,17 @@ class SimulatedToolRunner:
             decoded = Path(command[command.index("-o") + 1])
             (decoded / "smali").mkdir(parents=True)
             (decoded / "AndroidManifest.xml").write_text(
-                'package="com.example.game"', encoding="utf-8"
+                '<manifest package="com.example.game">'
+                '<application android:label="@string/app_name"/></manifest>',
+                encoding="utf-8",
             )
             (decoded / "smali" / "Main.smali").write_text(
                 "Lcom/example/game/Main;", encoding="utf-8"
+            )
+            (decoded / "res" / "values").mkdir(parents=True)
+            (decoded / "res" / "values" / "strings.xml").write_text(
+                '<resources><string name="app_name">Example Game</string></resources>',
+                encoding="utf-8",
             )
         elif "b" in command:
             Path(command[command.index("-o") + 1]).write_bytes(b"unsigned apk")
@@ -97,6 +104,7 @@ class BuildEngineTests(unittest.TestCase):
                 ),
                 "com.dev.example.game",
                 output,
+                app_label_suffix="(Dev)",
             )
             engine = StagedApkBuildEngine(
                 Toolchain(java, keytool, apktool, signer),
@@ -113,6 +121,9 @@ class BuildEngineTests(unittest.TestCase):
             )
 
             self.assertEqual(apk.read_bytes(), original_apk)
+            self.assertEqual(result.app_label, "Example Game (Dev)")
+            self.assertEqual(result.rewrite.label_before, "Example Game")
+            self.assertIn("Example Game (Dev)", result.text_report.read_text())  # type: ignore[union-attr]
             self.assertEqual(result.output_root, output.resolve())
             self.assertEqual(result.apk.read_bytes(), b"signed apk")
             self.assertTrue(result.manifest.is_file())

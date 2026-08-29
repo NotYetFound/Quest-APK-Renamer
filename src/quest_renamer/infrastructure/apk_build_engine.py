@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from quest_renamer.domain.build import BuildError, BuildResult, PackageRewriteReport
@@ -21,6 +22,7 @@ from quest_renamer.infrastructure.app_icons import (
     cache_decoded_app_icon,
     decoded_app_label,
 )
+from quest_renamer.infrastructure.app_label import AppLabelError, apply_app_label
 from quest_renamer.infrastructure.build_recovery import (
     clear_build_recovery,
     write_build_recovery,
@@ -268,11 +270,31 @@ class StagedApkBuildEngine:
                         request.package_name,
                         token=token,
                         log=log,
+                        rename_java_packages=request.rename_java_packages,
                     )
                     if rewrite.changed_occurrences == 0:
                         raise BuildError(
                             "The original package ID was not found in the decoded "
                             "Android files."
+                        )
+                if request.app_label.strip() or request.app_label_suffix.strip():
+                    progress(0.32, "Updating display name")
+                    try:
+                        label_before, label_after = apply_app_label(
+                            decoded,
+                            label=request.app_label,
+                            suffix=request.app_label_suffix,
+                            log=log,
+                        )
+                    except AppLabelError as exc:
+                        if request.app_label.strip():
+                            raise BuildError(str(exc)) from exc
+                        log(f"Display-name suffix skipped: {exc}")
+                        label_before = label_after = ""
+                    if label_after:
+                        app_label = label_after
+                        rewrite = replace(
+                            rewrite, label_before=label_before, label_after=label_after
                         )
                 if PATCH_ID in request.patches:
                     progress(0.34, "Applying older-firmware compatibility patch")
@@ -486,10 +508,23 @@ class StagedApkBuildEngine:
                     output.rmdir()  # Preflight only permits an existing empty directory.
                 os.replace(staging, output)
             published = True
-            clear_build_recovery(self.recovery_record, staging)
+            # The output exists from here on; bookkeeping problems are logged, never
+            # reported as a failed build (which would hide a finished folder).
+            try:
+                clear_build_recovery(self.recovery_record, staging)
+            except OSError as exc:
+                log(f"The build-recovery marker could not be cleared: {exc}")
             progress(1.0, "Build complete")
             final_apk = output / apk_output.relative_to(staging)
             final_obbs = tuple(output / path.relative_to(staging) for path in obb_outputs)
+            key_digest = ""
+            if signing_identity:
+                try:
+                    key_digest = hashlib.sha256(
+                        signing_identity.keystore.read_bytes()
+                    ).hexdigest()
+                except OSError as exc:
+                    log(f"The signing key could not be hashed for the report: {exc}")
             return BuildResult(
                 output,
                 final_apk,
@@ -501,16 +536,12 @@ class StagedApkBuildEngine:
                 output / "RENAME-REPORT.txt",
                 signing_identity.keystore if signing_identity else None,
                 signing_identity.metadata if signing_identity else None,
-                (
-                    hashlib.sha256(signing_identity.keystore.read_bytes()).hexdigest()
-                    if signing_identity
-                    else ""
-                ),
+                key_digest,
                 app_label,
                 app_icon,
             )
         except OperationCancelled:
-            partial = staging if any(staging.iterdir()) else None
+            partial = staging if staging.exists() and any(staging.iterdir()) else None
             if partial is None:
                 shutil.rmtree(staging, ignore_errors=True)
                 clear_build_recovery(self.recovery_record, staging)

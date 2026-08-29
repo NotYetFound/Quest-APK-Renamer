@@ -51,9 +51,9 @@ Button {
         anchors.top: parent.top
         height: control.visualHeight
         radius: 2
-        color: control.selected ? "#272727"
-              : control.activeFocus ? "#252525"
-              : rowHover.hovered ? "#222222"
+        color: control.selected ? "#222227"
+              : control.activeFocus ? "#202025"
+              : rowHover.hovered ? "#1d1d21"
               : "transparent"
         // Only the visible row reacts to the pointer; the 3 px hit gap below each
         // row belongs to the button for clicks but must not light it up.
@@ -65,7 +65,7 @@ Button {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             width: 2
-            color: control.activeFocus ? "#79a9cf" : "#4c8abb"
+            color: control.activeFocus ? "#7fb2dd" : "#4b90cc"
         }
     }
 }

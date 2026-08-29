@@ -97,7 +97,7 @@ class ActivityLog:
     def export(self, destination: Path) -> None:
         destination = destination.expanduser().resolve(strict=False)
         if destination == self.path.resolve(strict=False):
-            return
+            raise OSError("Choose a location outside the app's own log file.")
         destination.parent.mkdir(parents=True, exist_ok=True)
         temporary = destination.with_suffix(destination.suffix + ".tmp")
         try:

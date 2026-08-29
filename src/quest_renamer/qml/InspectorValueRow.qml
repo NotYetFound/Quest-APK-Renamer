@@ -45,6 +45,6 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 1
-        color: "#303030"
+        color: "#2b2b31"
     }
 }

@@ -142,9 +142,13 @@ def migrate_legacy_signing_identity(
             staged_key.chmod(mode)
             staged_metadata.chmod(mode)
         cancellation.raise_if_cancelled()
-        if signing_root.exists():
-            signing_root.rmdir()
-        os.replace(staging, signing_root)
+        # Move the two identity files into place individually: the signing folder may
+        # already hold auxiliary entries (app icons, imported identities, .DS_Store)
+        # that must survive, so the folder itself is never replaced.
+        signing_root.mkdir(parents=True, exist_ok=True)
+        os.replace(staged_key, destination_key)
+        os.replace(staged_metadata, destination_metadata)
+        shutil.rmtree(staging, ignore_errors=True)
         activated = True
         if log:
             log("Existing signing identity migrated; the original legacy files were preserved.")

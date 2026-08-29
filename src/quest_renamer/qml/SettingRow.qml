@@ -70,6 +70,6 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: 1
-        color: "#333333"
+        color: "#2d2d34"
     }
 }

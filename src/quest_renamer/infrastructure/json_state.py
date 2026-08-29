@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -55,10 +56,16 @@ class RecoveringJsonFile:
         self._restrict(temporary)
         os.replace(temporary, self.path)
 
+        # The primary file is already saved; a failing backup copy must not make the
+        # caller believe the new value was rejected.
         backup_temporary = self.backup_path.with_suffix(self.backup_path.suffix + ".tmp")
-        shutil.copyfile(self.path, backup_temporary)
-        self._restrict(backup_temporary)
-        os.replace(backup_temporary, self.backup_path)
+        try:
+            shutil.copyfile(self.path, backup_temporary)
+            self._restrict(backup_temporary)
+            os.replace(backup_temporary, self.backup_path)
+        except OSError:
+            with contextlib.suppress(OSError):
+                backup_temporary.unlink()
 
     def _read_validated(self, path: Path, parser: Callable[[object], T | None]) -> T:
         payload = json.loads(path.read_text(encoding="utf-8"))

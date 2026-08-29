@@ -4,12 +4,12 @@ import QtQuick
 Rectangle {
     id: bar
     property real value: 0
-    property color fillColor: "#4c8abb"
+    property color fillColor: "#4b90cc"
     property int thickness: 2
     implicitHeight: thickness
     height: thickness
     radius: thickness / 2
-    color: "#303030"
+    color: "#2b2b31"
     Rectangle {
         width: parent.width * Math.max(0, Math.min(1, bar.value))
         height: parent.height

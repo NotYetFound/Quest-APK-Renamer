@@ -16,11 +16,11 @@ Switch {
         x: toggle.leftPadding
         y: parent.height / 2 - height / 2
         radius: 11
-        color: !toggle.enabled ? "#2d2d2d"
-             : toggle.checked ? "#3478b1" : "#383838"
+        color: !toggle.enabled ? "#28282e"
+             : toggle.checked ? "#3580c2" : "#32323a"
         border.width: 1
-        border.color: toggle.activeFocus ? "#79a9cf"
-                    : toggle.checked ? "#4a8bc0" : "#505050"
+        border.color: toggle.activeFocus ? "#7fb2dd"
+                    : toggle.checked ? "#4b92cf" : "#494954"
         Behavior on color { ColorAnimation { duration: 120 } }
         Rectangle {
             x: toggle.checked ? parent.width - width - 3 : 3

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -21,7 +22,10 @@ from quest_renamer.domain.signing import (
     SigningState,
 )
 from quest_renamer.infrastructure.process_runner import CommandFailed, ProcessRunner
-from quest_renamer.infrastructure.signing_identity import signing_identity_is_incomplete
+from quest_renamer.infrastructure.signing_identity import (
+    AUXILIARY_SIGNING_ENTRIES,
+    signing_identity_is_incomplete,
+)
 
 KEYSTORE_NAME = "quest-renamer.p12"
 METADATA_NAME = "identity.json"
@@ -222,6 +226,17 @@ class SigningIdentityManager:
                     os.replace(recovery, self.root)
                     recovery = None
                 raise
+            if recovery is not None:
+                # App icons, imported identities and similar are not part of a backup;
+                # keep them with the live folder instead of the recovery copy.
+                for entry in list(recovery.iterdir()):
+                    if entry.name not in AUXILIARY_SIGNING_ENTRIES:
+                        continue
+                    destination = self.root / entry.name
+                    if destination.exists():
+                        continue
+                    with contextlib.suppress(OSError):
+                        os.replace(entry, destination)
             self._write_marker(source)
             if log:
                 log(f"Signing identity restored from {source}.")

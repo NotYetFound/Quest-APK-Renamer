@@ -13,7 +13,7 @@ Window {
     minimumHeight: 360
     visible: false
     title: "Quest APK Renamer Logs"
-    color: "#171717"
+    color: "#111113"
 
     // Keep the view pinned to the newest line unless the user scrolled up.
     property bool followTail: true
@@ -89,7 +89,7 @@ Window {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 1
-            color: "#353535"
+            color: "#2f2f36"
         }
 
         ScrollView {
@@ -117,7 +117,7 @@ Window {
                 selectByMouse: true
                 wrapMode: TextEdit.Wrap
                 color: "#c7c7c7"
-                selectionColor: "#4c8abb"
+                selectionColor: "#4b90cc"
                 selectedTextColor: "#ffffff"
                 font.family: Qt.platform.os === "windows" ? "Consolas"
                            : Qt.platform.os === "osx" ? "Menlo"
@@ -127,7 +127,7 @@ Window {
                 rightPadding: 16
                 topPadding: 14
                 bottomPadding: 14
-                background: Rectangle { color: "#171717" }
+                background: Rectangle { color: "#111113" }
                 onTextChanged: {
                     if (root.followTail && root.visible)
                         Qt.callLater(logView.positionAtEnd)
@@ -138,9 +138,9 @@ Window {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: 30
-            color: "#1b1b1b"
+            color: "#161619"
             border.width: 1
-            border.color: "#303030"
+            border.color: "#2b2b31"
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 12
@@ -156,7 +156,7 @@ Window {
                 Text {
                     visible: !root.followTail
                     text: "Paused — new lines below"
-                    color: "#d0b15b"
+                    color: "#e3b74a"
                     font.pixelSize: 9
                 }
                 AppButton {

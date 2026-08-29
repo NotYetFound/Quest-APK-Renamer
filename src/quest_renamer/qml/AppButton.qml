@@ -18,7 +18,10 @@ Button {
     Accessible.name: text
     Accessible.description: tip
 
-    ToolTip.visible: tip.length > 0 && hovered
+    // Disabled controls stop reporting ``hovered``; a handler keeps tracking so the
+    // tooltip can still explain why a button is greyed out.
+    HoverHandler { id: hoverTracker }
+    ToolTip.visible: tip.length > 0 && (hovered || hoverTracker.hovered)
     ToolTip.text: tip
     ToolTip.delay: 500
 
@@ -39,15 +42,15 @@ Button {
 
     background: Rectangle {
         radius: 3
-        color: !control.enabled ? "#242424"
-              : control.down ? (control.danger ? "#66332f" : control.primary ? "#285f8d" : "#292929")
-              : control.hovered ? (control.danger ? "#884842" : control.primary ? "#3e82bb" : "#333333")
-              : control.danger ? "#76403b"
-              : control.primary ? "#3478b1"
+        color: !control.enabled ? "#1f1f24"
+              : control.down ? (control.danger ? "#5c2c2b" : control.primary ? "#2a6699" : "#24242a")
+              : control.hovered ? (control.danger ? "#7a3b39" : control.primary ? "#408bca" : "#2d2d34")
+              : control.danger ? "#6a3533"
+              : control.primary ? "#3580c2"
               : control.quiet ? "transparent"
-              : "#2b2b2b"
+              : "#26262c"
         border.width: control.activeFocus || !(control.primary || control.danger || control.quiet) ? 1 : 0
-        border.color: control.activeFocus ? "#79a9cf" : "#464646"
+        border.color: control.activeFocus ? "#7fb2dd" : "#3f3f49"
 
         Behavior on color { ColorAnimation { duration: 100 } }
     }

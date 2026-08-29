@@ -23,10 +23,33 @@ from quest_renamer.domain.obb_names import parse_obb_filename
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
 from quest_renamer.domain.package_ids import is_valid_package_id
 from quest_renamer.infrastructure.adb_device import find_adb
-from quest_renamer.infrastructure.process_runner import ProcessRunner
+from quest_renamer.infrastructure.process_runner import (
+    CommandFailed,
+    CommandTimedOut,
+    ProcessRunner,
+)
 
 _OBB_NAME = re.compile(r"[A-Za-z0-9._-]+\.obb", re.IGNORECASE)
 _STAGING_NAME = re.compile(r"\.qar-new-[0-9a-f]{12}-\d+-[A-Za-z0-9._-]+\.obb", re.IGNORECASE)
+_PARKED_NAME = re.compile(r"^([A-Za-z0-9._-]+\.obb)\.qar-old-[A-Za-z0-9-]+$", re.IGNORECASE)
+# Transfers over wireless ADB can crawl at a few MB/s; never cut a large file short.
+_MIN_TRANSFER_TIMEOUT = 30 * 60
+_TRANSFER_FLOOR_RATE = 1024 * 1024  # bytes per second the timeout budgets for
+
+
+def _transfer_timeout(size: int) -> float:
+    return float(max(_MIN_TRANSFER_TIMEOUT, size // _TRANSFER_FLOOR_RATE + 120))
+
+
+def _rolled_back_sources(
+    prepared: tuple[_PreparedObb, ...], failed: tuple[Path, ...]
+) -> tuple[Path, ...]:
+    """Every OBB a rollback removes again, so a retry restores all of them."""
+    if not failed:
+        return failed
+    return tuple(item.source for item in prepared if item.action != "unchanged") or failed
+
+
 _INSTALL_FAILURE = re.compile(r"Failure\s*\[(INSTALL_[A-Z_]+)(?::\s*(.*?))?\]", re.IGNORECASE)
 _INSTALL_FAILURE_TEXT = {
     "INSTALL_FAILED_UPDATE_INCOMPATIBLE": (
@@ -161,17 +184,21 @@ class AdbApkInstaller:
             progress(0.86, "APK installed • verifying package and OBB files")
             self._verify_prepared_obbs(prepared, target, token, log)
             self._verify_package(bundle.package_name, target, token, progress, log)
-            # Only a bundle that supplies the complete OBB set may prune others.
-            expected = {obb.name for obb in bundle.obbs} if bundle.obbs else None
-            self._finish_obb_sync(bundle, prepared, target, token, log, expected=expected)
-            progress(1.0, "Install verified")
         except BundleInstallError as exc:
             exc.apk_installed = apk_installed
+            if activated:
+                exc.failed_obbs = _rolled_back_sources(prepared, exc.failed_obbs)
             self._undo_after_failure(prepared, activated, target, log)
             raise
         except Exception:
             self._undo_after_failure(prepared, activated, target, log)
             raise
+        # The install is verified from here on: cleanup must never undo it, and a
+        # cancel or hiccup during cleanup only leaves old files behind.
+        # Only a bundle that supplies the complete OBB set may prune others.
+        expected = {obb.name for obb in bundle.obbs} if bundle.obbs else None
+        self._finish_obb_sync_safely(bundle, prepared, target, token, log, expected=expected)
+        progress(1.0, "Install verified")
         return BundleInstallResult(
             bundle.package_name,
             bundle.apk,
@@ -203,12 +230,21 @@ class AdbApkInstaller:
             raise BundleInstallError("There are no failed OBB files to retry.")
         progress(0.04, "Preparing OBB retry")
         prepared = self._prepare_obb_sync(bundle, target, token, progress, log)
-        self._activate_prepared_obbs(prepared, target, token, log)
+        try:
+            self._activate_prepared_obbs(prepared, target, token, log)
+        except BundleInstallError as exc:
+            exc.apk_installed = True
+            self._remove_staged_obbs(prepared, target, log)
+            raise
+        except Exception:
+            self._remove_staged_obbs(prepared, target, log)
+            raise
         try:
             self._verify_prepared_obbs(prepared, target, token, log)
             self._verify_package(bundle.package_name, target, token, progress, log)
         except BundleInstallError as exc:
             exc.apk_installed = True
+            exc.failed_obbs = _rolled_back_sources(prepared, exc.failed_obbs)
             self._rollback_prepared_obbs(prepared, target, log)
             raise
         except Exception:
@@ -217,7 +253,7 @@ class AdbApkInstaller:
         expected = (
             set(keep_obb_names) | {obb.name for obb in bundle.obbs} if keep_obb_names else None
         )
-        self._finish_obb_sync(bundle, prepared, target, token, log, expected=expected)
+        self._finish_obb_sync_safely(bundle, prepared, target, token, log, expected=expected)
         progress(1.0, "OBB retry verified")
         return BundleInstallResult(
             bundle.package_name,
@@ -289,7 +325,8 @@ class AdbApkInstaller:
             # adb prints nothing while streaming a large APK; keep the label alive.
             while not stop.wait(2.0):
                 elapsed = int(time.monotonic() - started)
-                progress(0.68 + min(0.16, elapsed / 600), f"Installing APK • {elapsed} s")
+                if not stop.is_set():
+                    progress(0.68 + min(0.16, elapsed / 600), f"Installing APK • {elapsed} s")
 
         ticker = threading.Thread(target=heartbeat, daemon=True)
         ticker.start()
@@ -299,6 +336,7 @@ class AdbApkInstaller:
                 token=token,
                 log=log,
                 check=False,
+                timeout=_transfer_timeout(bundle.apk.stat().st_size),
             )
         finally:
             stop.set()
@@ -397,10 +435,11 @@ class AdbApkInstaller:
                     continue
 
             reusable: _RemoteObb | None = None
+            bundle_names = {item.name for item in bundle.obbs}
             for candidate in remote.values():
                 if (
                     candidate.name in used_remote
-                    or candidate.name == obb.name
+                    or candidate.name in bundle_names
                     or candidate.size != size
                 ):
                     continue
@@ -522,12 +561,18 @@ class AdbApkInstaller:
                 if rate > 0:
                     remaining = (size - current) / rate
                     detail += f" • {format_transfer_rate(rate)} • {format_eta(remaining)}"
-                report(fraction, detail)
+                if not stop.is_set():
+                    report(fraction, detail)
 
         sampler = threading.Thread(target=sample, daemon=True)
         sampler.start()
         try:
-            self.runner.run((*target, "push", source, staged), token=token, log=log)
+            self.runner.run(
+                (*target, "push", source, staged),
+                token=token,
+                log=log,
+                timeout=_transfer_timeout(size),
+            )
         finally:
             stop.set()
             sampler.join(timeout=0.5)
@@ -545,11 +590,27 @@ class AdbApkInstaller:
             log=log,
             check=False,
         )
+        names = {raw.strip() for raw in result.output}
         stale = [
             f"{remote_root}/{name}"
-            for raw in result.output
-            if (name := raw.strip()).startswith(".qar-new-") and _STAGING_NAME.fullmatch(name)
+            for name in names
+            if name.startswith(".qar-new-") and _STAGING_NAME.fullmatch(name)
         ]
+        for name in sorted(names):
+            parked = _PARKED_NAME.fullmatch(name)
+            if parked is None:
+                continue
+            original = parked.group(1)
+            if original in names:
+                stale.append(f"{remote_root}/{name}")
+                continue
+            # An interrupted activation left only the parked original; put it back.
+            log(f"Restoring OBB parked by an interrupted install: {original}")
+            self.runner.run(
+                (*target, "shell", "mv", f"{remote_root}/{name}", f"{remote_root}/{original}"),
+                log=log,
+                check=False,
+            )
         if stale:
             self._remove_remote_many(target, stale, log)
 
@@ -580,13 +641,15 @@ class AdbApkInstaller:
                         token=token,
                         log=log,
                     )
+                # From here the original is parked as a backup; a failure on the next
+                # step must restore it, so the item counts as activated already.
+                activated.append(item)
                 incoming = item.staged_path or item.reused_path
                 self.runner.run(
                     (*target, "shell", "mv", incoming, item.remote_path),
                     token=token,
                     log=log,
                 )
-                activated.append(item)
         except Exception:
             self._rollback_prepared_obbs(tuple(activated), target, log)
             raise
@@ -617,6 +680,24 @@ class AdbApkInstaller:
                     f"Quest reported the wrong size for {item.source.name}.",
                     failed_obbs=(item.source,),
                 )
+
+    def _finish_obb_sync_safely(
+        self,
+        bundle: BundleDraft,
+        prepared: tuple[_PreparedObb, ...],
+        target: tuple[Path, str, str],
+        token: CancellationToken,
+        log: Callable[[str], None],
+        *,
+        expected: set[str] | None,
+    ) -> None:
+        """Run post-verification cleanup without ever undoing the verified install."""
+        try:
+            self._finish_obb_sync(bundle, prepared, target, token, log, expected=expected)
+        except OperationCancelled:
+            log("Cancelled during cleanup; the verified install is kept as is.")
+        except (CommandFailed, CommandTimedOut, OSError) as exc:
+            log(f"Cleanup of old OBB files skipped: {exc}")
 
     def _finish_obb_sync(
         self,

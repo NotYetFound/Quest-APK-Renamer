@@ -178,6 +178,10 @@ def write_build_report(
             "preserved_files": list(rewrite.preserved_files),
             "namespace_references_kept": rewrite.namespace_references,
             "qualified_manifest_components": rewrite.qualified_components,
+            "jni_libraries": list(rewrite.jni_libraries),
+            "java_packages_renamed": rewrite.java_packages_renamed,
+            "label_before": rewrite.label_before,
+            "label_after": rewrite.label_after,
         },
         "preserved_game_content": True,
         "notes": [
@@ -251,11 +255,23 @@ def write_build_report(
                 "-------",
                 f"Identity references changed:  {rewrite.changed_occurrences}",
                 f"Decoded files changed:         {rewrite.changed_files}",
-                f"Java class references kept:    {rewrite.namespace_references}",
+                f"Java class references kept:    {rewrite.namespace_references}"
+                + (
+                    " (legacy mode: Java packages renamed)"
+                    if rewrite.java_packages_renamed
+                    else ""
+                ),
                 f"Manifest names expanded:       {rewrite.qualified_components}",
+                f"JNI libraries for the package: {len(rewrite.jni_libraries)}",
+                "Display name:                  "
+                + (
+                    f"{rewrite.label_before!r} → {rewrite.label_after!r}"
+                    if rewrite.label_after
+                    else "Left unchanged"
+                ),
                 f"Compatibility patches:         {patches}",
                 f"OBB files renamed:              {len(obbs)}",
-                "Game name and in-game text:     Left unchanged",
+                "In-game text:                   Left unchanged",
                 "",
                 "OBB FILES",
                 "---------",

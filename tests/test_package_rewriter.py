@@ -4,6 +4,10 @@ from pathlib import Path
 
 from quest_renamer.domain.operations import CancellationToken
 from quest_renamer.infrastructure.package_rewriter import replace_package_references
+from quest_renamer.infrastructure.reference_scanner import (
+    find_jni_libraries,
+    jni_export_prefix,
+)
 
 
 class PackageRewriterTests(unittest.TestCase):
@@ -134,6 +138,149 @@ class PackageRewriterTests(unittest.TestCase):
             self.assertIn('android:name="com.example.game.mr.key"', text)
             self.assertIn('android:name="com.example.game.Receiver"', text)
             self.assertIn('android:name="com.example.game.mr.ACTION_WAKE"', text)
+
+    def test_jni_libraries_are_detected_and_block_legacy_namespace_renames(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            decoded = Path(temporary)
+            lib = decoded / "lib" / "arm64-v8a" / "libgame.so"
+            other = decoded / "lib" / "arm64-v8a" / "libcodec.so"
+            smali = decoded / "smali" / "Main.smali"
+            for path in (lib, other, smali):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            lib.write_bytes(b"\x00Java_com_my_1game_app_Main_nativeInit\x00")
+            other.write_bytes(b"\x00Java_org_other_Lib_init\x00")
+            smali.write_text("Lcom/my_game/app/Main;", encoding="utf-8")
+            (decoded / "AndroidManifest.xml").write_text(
+                'package="com.my_game.app"', encoding="utf-8"
+            )
+
+            self.assertEqual(jni_export_prefix("com.my_game.app"), b"Java_com_my_1game_app_")
+            self.assertEqual(
+                find_jni_libraries(decoded, "com.my_game.app", CancellationToken()),
+                ("lib/arm64-v8a/libgame.so",),
+            )
+            with self.assertRaisesRegex(ValueError, "native code binds"):
+                replace_package_references(
+                    decoded,
+                    "com.my_game.app",
+                    "com.dev.my_game.app",
+                    token=CancellationToken(),
+                    rename_java_packages=True,
+                )
+            self.assertIn("Lcom/my_game/app/Main;", smali.read_text(encoding="utf-8"))
+
+            result = replace_package_references(
+                decoded, "com.my_game.app", "com.dev.my_game.app", token=CancellationToken()
+            )
+
+            self.assertEqual(result.jni_libraries, ("lib/arm64-v8a/libgame.so",))
+            self.assertFalse(result.java_packages_renamed)
+            self.assertIn("Lcom/my_game/app/Main;", smali.read_text(encoding="utf-8"))
+
+    def test_legacy_mode_renames_java_packages_when_no_native_code_binds(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            decoded = Path(temporary)
+            smali = decoded / "smali" / "Main.smali"
+            smali.parent.mkdir(parents=True)
+            smali.write_text(
+                'Lcom/example/game/Main;\nconst-string v0, "com.example.game.ui.Main"\n',
+                encoding="utf-8",
+            )
+            (decoded / "AndroidManifest.xml").write_text(
+                'package="com.example.game"', encoding="utf-8"
+            )
+
+            result = replace_package_references(
+                decoded,
+                "com.example.game",
+                "com.example.game.mr",
+                token=CancellationToken(),
+                rename_java_packages=True,
+            )
+
+            self.assertTrue(result.java_packages_renamed)
+            self.assertEqual(result.changed_occurrences, 3)
+            self.assertEqual(result.namespace_references, 0)
+            text = smali.read_text(encoding="utf-8")
+            self.assertIn("Lcom/example/game/mr/Main;", text)
+            self.assertIn('"com.example.game.mr.ui.Main"', text)
+
+    def test_component_classes_of_any_shape_and_foreign_packages_are_protected(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            decoded = Path(temporary)
+            smali_dir = decoded / "smali" / "com" / "example" / "game"
+            (smali_dir / "a").mkdir(parents=True)
+            (smali_dir / "NDK.smali").write_text(
+                ".class Lcom/example/game/NDK;", encoding="utf-8"
+            )
+            (smali_dir / "a" / "b.smali").write_text(
+                '.class Lcom/example/game/a/b;\nconst-string v0, "com.example.game.a.b"\n'
+                'const-string v1, "com.example.game.NDK"\n'
+                'const-string v2, "com.example.game.companion"\n'
+                "const-string v3, "
+                '"/Android/obb/com.example.game/main.1.com.example.game.obb"\n',
+                encoding="utf-8",
+            )
+            manifest = decoded / "AndroidManifest.xml"
+            manifest.write_text(
+                """<manifest package="com.example.game">
+    <queries><package android:name="com.example.game.companion"/>
+        <package android:name="com.example.game"/></queries>
+    <instrumentation android:targetPackage="com.example.game" android:name=".Runner"/>
+    <application android:name=".NDK">
+        <activity android:name=".a.b" android:parentActivityName=".NDK">
+            <meta-data android:name="android.support.PARENT_ACTIVITY" android:value=".NDK"/>
+        </activity>
+        <activity android:name="Alias"
+            android:targetActivity="com.example.game.companion.Main"/>
+        <meta-data android:name="com.example.game.key" android:value="com.example.game"/>
+    </application>
+</manifest>
+""",
+                encoding="utf-8",
+            )
+
+            result = replace_package_references(
+                decoded, "com.example.game", "com.example.game.dev", token=CancellationToken()
+            )
+
+            text = manifest.read_text(encoding="utf-8")
+            self.assertIn('package="com.example.game.dev"', text)
+            self.assertIn('<package android:name="com.example.game.companion"/>', text)
+            self.assertIn('<package android:name="com.example.game.dev"/>', text)
+            self.assertIn('android:targetPackage="com.example.game.dev"', text)
+            self.assertIn('android:name="com.example.game.Runner"', text)
+            self.assertIn('<application android:name="com.example.game.NDK">', text)
+            self.assertIn('android:name="com.example.game.a.b"', text)
+            self.assertIn('android:parentActivityName="com.example.game.NDK"', text)
+            self.assertIn('android:value="com.example.game.NDK"', text)
+            self.assertIn('android:targetActivity="com.example.game.companion.Main"', text)
+            self.assertIn(
+                'android:name="com.example.game.dev.key" android:value="com.example.game.dev"',
+                text,
+            )
+            self.assertEqual(result.qualified_components, 6)
+            smali = (smali_dir / "a" / "b.smali").read_text(encoding="utf-8")
+            self.assertIn('"com.example.game.a.b"', smali)
+            self.assertIn('"com.example.game.NDK"', smali)
+            # A sibling package the code talks to is not part of this app's identity...
+            # unless it is not code at all; without a smali path it is treated as identity.
+            self.assertIn('"com.example.game.dev.companion"', smali)
+            self.assertIn(
+                '"/Android/obb/com.example.game.dev/main.1.com.example.game.dev.obb"', smali
+            )
+
+    def test_find_class_lookups_in_native_code_count_as_jni_bindings(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            decoded = Path(temporary)
+            lib = decoded / "lib" / "arm64-v8a" / "libglue.so"
+            lib.parent.mkdir(parents=True)
+            lib.write_bytes(b"\x00com/example/game/Bridge\x00")
+
+            self.assertEqual(
+                find_jni_libraries(decoded, "com.example.game", CancellationToken()),
+                ("lib/arm64-v8a/libglue.so",),
+            )
 
 
 if __name__ == "__main__":

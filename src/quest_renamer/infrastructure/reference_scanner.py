@@ -50,9 +50,19 @@ _SLASHED_STOP = _IDENT_BYTES | {ord("/")}
 _LOOKBEHIND_CONTEXT = 2
 
 
-def _dotted_boundary(data: bytes, start: int) -> bool:
-    """Not preceded by an identifier char or a dot (that would be another package)."""
-    return start == 0 or data[start - 1] not in _DOTTED_STOP
+def _dotted_boundary(data: bytes, start: int, continuation: bytes = b"") -> bool:
+    """Not preceded by an identifier char or a dot (that would be another package).
+
+    The one legitimate dot-preceded form is an expansion-file name
+    (``main.1.com.example.game.obb``), where the package sits between the version
+    tag and the ``.obb`` extension.
+    """
+    if start == 0:
+        return True
+    previous = data[start - 1]
+    if previous not in _DOTTED_STOP:
+        return True
+    return previous == ord(".") and continuation.lower() == b".obb"
 
 
 def _slashed_boundary(data: bytes, start: int) -> bool:
@@ -90,14 +100,23 @@ def is_java_continuation(continuation: bytes) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class PackagePatterns:
-    """Compiled byte patterns for one package ID in dotted and slashed (JVM) form."""
+    """Compiled byte patterns for one package ID in dotted and slashed (JVM) form.
+
+    ``java_paths`` optionally lists slashed class and package paths that exist in
+    the decoded code (``com/example/game/NDK``, ``com/example/game/a``); a dotted
+    continuation naming one of them is Java even when its shape looks like an
+    identity constant (ALL_CAPS or obfuscated one-letter names).
+    """
 
     package: str
     dotted: re.Pattern[bytes]
     slashed: re.Pattern[bytes] | None
+    java_paths: frozenset[bytes] = frozenset()
 
     @classmethod
-    def for_package(cls, package: str) -> PackagePatterns:
+    def for_package(
+        cls, package: str, java_paths: frozenset[bytes] = frozenset()
+    ) -> PackagePatterns:
         if not package:
             raise ValueError("A package ID is required.")
         dotted_bytes = re.escape(package.encode("utf-8"))
@@ -114,17 +133,28 @@ class PackagePatterns:
         if "." in package:
             slashed_bytes = re.escape(package.replace(".", "/").encode("utf-8"))
             slashed = re.compile(slashed_bytes + rb"(?![" + _IDENT + rb"])")
-        return cls(package, dotted, slashed)
+        return cls(package, dotted, slashed, java_paths)
 
     @property
     def longest(self) -> int:
         return len(self.package.encode("utf-8"))
 
+    def names_java(self, continuation: bytes) -> bool:
+        """Whether a dotted continuation names Java code rather than the app identity."""
+        if is_java_continuation(continuation):
+            return True
+        if not self.java_paths or not continuation:
+            return False
+        path = self.package.replace(".", "/").encode("utf-8") + continuation.split(b"$", 1)[
+            0
+        ].replace(b".", b"/")
+        return path in self.java_paths
+
     def iter_matches(self, data: bytes) -> Iterator[tuple[int, bool]]:
         """Yield ``(start, is_identity)`` for every reference in ``data``."""
         for match in self.dotted.finditer(data):
-            if _dotted_boundary(data, match.start()):
-                yield match.start(), not is_java_continuation(match.group(1))
+            if _dotted_boundary(data, match.start(), match.group(1)):
+                yield match.start(), not self.names_java(match.group(1))
         if self.slashed is not None:
             for match in self.slashed.finditer(data):
                 if _slashed_boundary(data, match.start()):
@@ -146,10 +176,15 @@ class PackagePatterns:
         updated, changed, _kept = self.rewrite(data, new_package)
         return updated, changed
 
-    def rewrite(self, data: bytes, new_package: str) -> tuple[bytes, int, int]:
-        """Rewrite identity references; return ``(bytes, changed, namespace_kept)``.
+    def rewrite(
+        self, data: bytes, new_package: str, *, namespace: bool = False
+    ) -> tuple[bytes, int, int]:
+        """Rewrite references; return ``(bytes, changed, namespace_kept)``.
 
-        Files without any dotted match are returned untouched without a copy.
+        By default only identity references change. With ``namespace=True`` the
+        Java namespace moves as well (legacy behaviour: class descriptors, paths and
+        dotted class names) — only safe for apps without JNI code of their own.
+        Files without any match are returned untouched without a copy.
         """
         replacement = new_package.encode("utf-8")
         changed = 0
@@ -157,23 +192,105 @@ class PackagePatterns:
 
         def swap(match: re.Match[bytes]) -> bytes:
             nonlocal changed, kept
-            if not _dotted_boundary(data, match.start()):
-                return match.group(0)
             continuation = match.group(1)
-            if is_java_continuation(continuation):
+            if not _dotted_boundary(data, match.start(), continuation):
+                return match.group(0)
+            if not namespace and self.names_java(continuation):
                 kept += 1
                 return match.group(0)
             changed += 1
             return replacement + continuation
 
         updated = self.dotted.sub(swap, data) if self.dotted.search(data) else data
-        if self.slashed is not None:
+        if self.slashed is None:
+            return updated, changed, kept
+        if namespace:
+            slashed_replacement = new_package.replace(".", "/").encode("utf-8")
+
+            def swap_slashed(match: re.Match[bytes]) -> bytes:
+                nonlocal changed
+                if not _slashed_boundary(match.string, match.start()):
+                    return match.group(0)
+                changed += 1
+                return slashed_replacement
+
+            updated = self.slashed.sub(swap_slashed, updated)
+        else:
             kept += sum(
                 1
                 for match in self.slashed.finditer(data)
                 if _slashed_boundary(data, match.start())
             )
         return updated, changed, kept
+
+
+def jni_export_prefix(package: str) -> bytes:
+    """The ``Java_<package>_`` prefix native libraries export for JNI methods.
+
+    Mangling follows the JNI specification: ``.`` → ``_``, ``_`` → ``_1``, and any
+    other non-ASCII-alphanumeric character → ``_0XXXX``.
+    """
+    parts: list[str] = []
+    for char in package:
+        if char == ".":
+            parts.append("_")
+        elif char == "_":
+            parts.append("_1")
+        elif char.isascii() and char.isalnum():
+            parts.append(char)
+        else:
+            parts.append(f"_0{ord(char):04x}")
+    return ("Java_" + "".join(parts) + "_").encode("ascii")
+
+
+def find_jni_libraries(
+    decoded: Path,
+    package: str,
+    token: CancellationToken,
+    *,
+    max_size: int = 1024 * 1024 * 1024,
+) -> tuple[str, ...]:
+    """Native libraries that bind to Java classes inside ``package``.
+
+    Both directions count: exported ``Java_<package>_…`` methods and slashed class
+    paths used for ``FindClass``/``GetMethodID`` lookups. Renaming the Java
+    namespace would leave those unresolved and crash the app at launch.
+    """
+    patterns = (jni_export_prefix(package), package.replace(".", "/").encode("utf-8") + b"/")
+    found: list[str] = []
+    for path, relative, size in iter_decoded_files(decoded / "lib"):
+        token.raise_if_cancelled()
+        if not relative.lower().endswith(".so"):
+            continue
+        counts = count_file_patterns(path, patterns, token, max_size=max_size, size=size)
+        if counts and any(counts):
+            found.append("lib/" + relative)
+    return tuple(found)
+
+
+def collect_java_paths(decoded: Path, package: str) -> frozenset[bytes]:
+    """Slashed paths of every class and package directory under ``package`` in smali."""
+    relative = package.replace(".", "/")
+    paths: set[bytes] = set()
+    try:
+        roots = [
+            entry
+            for entry in decoded.iterdir()
+            if entry.is_dir() and entry.name.startswith("smali")
+        ]
+    except OSError:
+        return frozenset()
+    for root in roots:
+        base = root / relative
+        if not base.is_dir():
+            continue
+        for current, _dirs, files in os.walk(base):
+            rel_dir = os.path.relpath(current, root).replace(os.sep, "/")
+            paths.add(rel_dir.encode("utf-8"))
+            for name in files:
+                if name.endswith(".smali"):
+                    paths.add(f"{rel_dir}/{name[:-6]}".encode())
+    return frozenset(paths)
 
 
 def is_technical_file(relative_posix: str) -> bool:

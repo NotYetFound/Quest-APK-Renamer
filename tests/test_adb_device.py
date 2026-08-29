@@ -33,7 +33,13 @@ class AdbDeviceTests(unittest.TestCase):
 
         self.assertEqual(len(records), 2)
         self.assertEqual(records[0].serial, "QUEST123")
-        self.assertEqual(records[0].attributes["model"], "Quest 3")
+        self.assertEqual(records[0].attributes["model"], "Quest_3")
+        chatter = parse_adb_devices(
+            "adb server version (41) doesn't match this client (39); killing...\n"
+            "* daemon started successfully\n"
+            "List of devices attached\n"
+        )
+        self.assertEqual(chatter, ())
         self.assertEqual(records[1].state, "unauthorized")
 
     def test_storage_parser_handles_android_df_output(self) -> None:

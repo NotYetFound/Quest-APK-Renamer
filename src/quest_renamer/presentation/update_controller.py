@@ -123,7 +123,7 @@ class UpdateController(QObject):
         manual = self._manual_requested
         self._manual_requested = False
         self._busy = False
-        self._checked = True
+        self._checked = not raw_outcome.error
         if raw_outcome.error:
             self._status = "GitHub could not be reached. Try again later."
             self._tone = "warning" if manual else "neutral"
@@ -167,7 +167,15 @@ class UpdateController(QObject):
     @Slot()
     def refreshPreference(self) -> None:
         enabled, _dismissed = self._preferences()
-        if not enabled and not self._busy:
+        if self._busy:
+            return
+        if not enabled:
             self._status = "Automatic update checks are off."
+            self._tone = "neutral"
+            self.changed.emit()
+        elif not self._checked:
+            self._start(manual=False)
+        elif self._status == "Automatic update checks are off.":
+            self._status = ""
             self._tone = "neutral"
             self.changed.emit()
