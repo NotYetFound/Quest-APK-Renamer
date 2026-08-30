@@ -17,7 +17,7 @@ Download the latest version from the [GitHub Releases page](https://github.com/N
 | Linux x86_64 | AppImage or portable tarball |
 | Apple Silicon macOS | ARM64 DMG |
 | Intel macOS | x86_64 DMG |
-Windows builds are currently unsigned and macOS builds are not notarized, so your operating system may show an unknown developer warning.
+> Windows builds are currently unsigned and macOS builds are not notarized, so your operating system may show an unknown developer warning.
 ## Quick Start
 1. Select an APK or a folder containing an APK and its OBB files.
 2. Choose the new package ID. A safe suggestion is created automatically.
