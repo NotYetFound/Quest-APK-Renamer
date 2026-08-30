@@ -2,8 +2,10 @@
 [![Latest release](https://img.shields.io/github/v/release/NotYetFound/Quest-APK-Renamer?display_name=tag&sort=semver)](https://github.com/NotYetFound/Quest-APK-Renamer/releases/latest)
 [![Tests](https://github.com/NotYetFound/Quest-APK-Renamer/actions/workflows/test.yml/badge.svg)](https://github.com/NotYetFound/Quest-APK-Renamer/actions/workflows/test.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Quest APK Renamer creates a second copy of a Meta Quest APK with a different Android package ID, allowing it to be installed beside the original game.
 It can rename, rebuild, sign, verify, and install APKs and their OBB files directly to your Quest.
+
 Available for Windows, Linux, and macOS. Release packages include the required Android tools, so no Android SDK setup is needed.
 > This project was made with AI assistance. Expect bugs, keep backups, and use it carefully.
 ![Quest APK Renamer dashboard](docs/screenshots/dashboard.png)
@@ -38,6 +40,7 @@ The renamed APK and OBB files are saved in a separate ` - Renamed` folder. Your 
 - Automatic Android tool checks and repair
 - Build and installation progress
 - Detailed logs and support information
+- And more...
 ## Wireless Quest Connection
 You can connect using USB or wireless ADB.
 Connect the Quest over USB first and use **Enable wireless ADB over USB** to switch it to Wi-Fi. Saved Quest addresses can then be reconnected from the app.
