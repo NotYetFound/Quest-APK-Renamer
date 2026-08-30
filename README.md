@@ -8,6 +8,7 @@ It can rename, rebuild, sign, verify, and install APKs and their OBB files direc
 
 Available for Windows, Linux, and macOS. Release packages include the required Android tools, so no Android SDK setup is needed.
 > This project was made with AI assistance. Expect bugs, keep backups, and use it carefully.
+
 ![Quest APK Renamer dashboard](docs/screenshots/dashboard.png)
 ## Download
 Download the latest version from the [GitHub Releases page](https://github.com/NotYetFound/Quest-APK-Renamer/releases/latest).
