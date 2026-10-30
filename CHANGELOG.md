@@ -4,6 +4,16 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+### Fixed
+
+- Non-OBB files inside a game's OBB folder (`<package>/`) are now copied into the renamed
+  `<new package>/` folder instead of being dropped, and are listed in the build report.
+- Installing a bundle now also pushes those non-OBB files to `/sdcard/Android/obb/<package>/`,
+  skipping files that already match and verifying size and SHA-256 before moving them into place.
+- Extra game data is included in capacity checks and has separate transfer progress. Failed
+  extra-file transfers can be retried without reinstalling the APK or successful OBBs. Failed or
+  cancelled installs keep the source and remove only their own temporary uploads.
+
 ## [1.4.9] - 2026-10-10
 
 ### Added

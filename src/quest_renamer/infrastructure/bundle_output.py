@@ -15,6 +15,7 @@ from quest_renamer.domain.build import PackageRewriteReport
 from quest_renamer.domain.models import BuildRequest
 from quest_renamer.domain.obb_names import renamed_obb_filenames
 from quest_renamer.domain.operations import CancellationToken
+from quest_renamer.domain.package_ids import is_valid_package_id
 
 
 def copy_file(
@@ -55,6 +56,21 @@ def obb_destinations(request: BuildRequest, output_root: Path) -> tuple[Path, ..
     return tuple(output_root / request.package_name / name for name in names)
 
 
+def extra_package_files(request: BuildRequest) -> tuple[tuple[Path, Path], ...]:
+    """Non-OBB files inside the source's OBB folder, paired with their relative output path.
+
+    Games sometimes ship loose data beside their OBBs in ``<package>/``. They belong
+    in the renamed ``<new package>/`` folder, so they are carried over unchanged.
+    """
+    if not is_valid_package_id(request.package_name):
+        raise ValueError("The output package ID is invalid.")
+    source_dir = request.source.root / request.source.package_name
+    return tuple(
+        (path, Path(request.package_name) / path.relative_to(source_dir))
+        for path in request.source.extra_files
+    )
+
+
 def write_release_manifest(
     request: BuildRequest,
     output_root: Path,
@@ -65,6 +81,11 @@ def write_release_manifest(
 ) -> Path:
     """Write ``release.manifest``; ``release_name`` is the final visible folder name."""
     total_size = apk.stat().st_size + sum(path.stat().st_size for path in obbs)
+    total_size += sum(
+        path.stat().st_size
+        for path in (output_root / relative for _, relative in extra_package_files(request))
+        if path.is_file()
+    )
     updated = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
     rows = [
         ["#VRPRELEASEMANIFEST 1.0"],
@@ -125,6 +146,7 @@ def write_build_report(
     rewrite: PackageRewriteReport,
     *,
     token: CancellationToken,
+    extra_files: tuple[Path, ...] = (),
 ) -> Path:
     created = dt.datetime.now(dt.UTC)
     source_signer = (
@@ -172,6 +194,7 @@ def write_build_report(
             "signature_verified": request.sign_apk,
         },
         "obbs": obb_rows,
+        "extra_files": [path.relative_to(output_root).as_posix() for path in extra_files],
         "rewrite": {
             "changed_files": rewrite.changed_files,
             "changed_occurrences": rewrite.changed_occurrences,
@@ -271,6 +294,7 @@ def write_build_report(
                 ),
                 f"Compatibility patches:         {patches}",
                 f"OBB files renamed:              {len(obbs)}",
+                f"Other OBB-folder files copied:  {len(extra_files)}",
                 "In-game text:                   Left unchanged",
                 "",
                 "OBB FILES",

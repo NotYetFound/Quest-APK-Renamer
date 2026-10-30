@@ -1564,7 +1564,7 @@ ApplicationWindow {
                                     }
                                     AppButton {
                                         text: appController.isInstalling ? "Cancel install"
-                                              : appController.canRetryObbs ? "Retry failed OBB transfer"
+                                              : appController.canRetryObbs ? appController.retryFilesLabel
                                               : appController.buildActionLabel
                                         primary: !appController.isBuilding && !appController.isInstalling
                                         enabled: appController.isInstalling || appController.canRetryObbs

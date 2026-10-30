@@ -140,6 +140,45 @@ class BuildEngineTests(unittest.TestCase):
                 any("Copying OBB 1 of 1 •" in message for _, message in progress_updates)
             )
 
+    def test_non_obb_files_in_the_obb_folder_are_carried_to_the_renamed_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            data = source / "com.example.game"
+            (data / "extra").mkdir(parents=True)
+            apk = source / "game.apk"
+            apk.write_bytes(b"original apk")
+            obb = data / "main.42.com.example.game.obb"
+            obb.write_bytes(b"obb data")
+            (data / "settings.json").write_text("{}", encoding="utf-8")
+            (data / "extra" / "pack.dat").write_bytes(b"pack")
+            request = BuildRequest(
+                BundleDraft(
+                    source,
+                    apk,
+                    (obb,),
+                    package_name="com.example.game",
+                    version_code="42",
+                ),
+                "com.dev.example.game",
+                root / "finished",
+            )
+
+            result = self._engine(root).build(request)
+
+            renamed = result.output_root / "com.dev.example.game"
+            self.assertEqual((renamed / "settings.json").read_text(), "{}")
+            self.assertEqual((renamed / "extra" / "pack.dat").read_bytes(), b"pack")
+            self.assertEqual(len(result.obbs), 1)
+            report = json.loads(result.report.read_text(encoding="utf-8"))
+            self.assertEqual(
+                report["extra_files"],
+                [
+                    "com.dev.example.game/extra/pack.dat",
+                    "com.dev.example.game/settings.json",
+                ],
+            )
+
     def test_patch_only_pipeline_keeps_package_identity_and_applies_patch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

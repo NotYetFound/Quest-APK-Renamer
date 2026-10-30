@@ -92,6 +92,7 @@ class InstallOutcome:
     error: str = ""
     cancelled: bool = False
     failed_obbs: tuple[Path, ...] = ()
+    failed_extra_files: tuple[Path, ...] = ()
     apk_installed: bool = False
     conflict_package: str = ""
 
@@ -327,8 +328,7 @@ class AppController(QObject):
             self._output_conflict()
             and len(failures) == 1
             and failures[0].key == "output"
-            and failures[0].detail
-            == "The output folder already exists and is not empty."
+            and failures[0].detail == "The output folder already exists and is not empty."
         )
 
     def _can_install_direct_library_update(self) -> bool:
@@ -425,6 +425,17 @@ class AppController(QObject):
     @Property(bool, notify=readinessChanged)
     def canRetryObbs(self) -> bool:
         return self._retry_bundle is not None and not self.isBusy
+
+    @Property(str, notify=readinessChanged)
+    def retryFilesLabel(self) -> str:
+        bundle = self._retry_bundle
+        if bundle is None:
+            return "Retry failed files"
+        if self._retry_reinstall:
+            return "Retry installation"
+        if bundle.obbs and bundle.extra_files:
+            return "Retry failed files"
+        return "Retry failed OBBs" if bundle.obbs else "Retry failed extra files"
 
     @Property(bool, notify=readinessChanged)
     def hasBuildResult(self) -> bool:
@@ -626,9 +637,7 @@ class AppController(QObject):
     def libraryMatch(self) -> str:
         if self._direct_library_update_package:
             version = (
-                self._library_controller.installed_version(
-                    self._direct_library_update_package
-                )
+                self._library_controller.installed_version(self._direct_library_update_package)
                 if self._library_controller is not None
                 else ""
             )
@@ -778,9 +787,7 @@ class AppController(QObject):
         return package_id_error(
             self._package_id,
             self._bundle.package_name if self._bundle else "",
-            allow_same=bool(
-                self._patch_only_build() or self._direct_library_update_package
-            ),
+            allow_same=bool(self._patch_only_build() or self._direct_library_update_package),
         )
 
     def _library_identity_error(self) -> str:
@@ -788,13 +795,9 @@ class AppController(QObject):
             if self._bundle is None:
                 return "Choose an update APK or folder."
             if self._bundle.package_name != self._direct_library_update_package:
-                return (
-                    "The selected update does not match the app chosen from the Quest."
-                )
+                return "The selected update does not match the app chosen from the Quest."
             installed = (
-                self._library_controller.installed_version(
-                    self._direct_library_update_package
-                )
+                self._library_controller.installed_version(self._direct_library_update_package)
                 if self._library_controller is not None
                 else ""
             )
@@ -813,9 +816,7 @@ class AppController(QObject):
         profile = self._library_controller.profile(self._matched_library_profile_id)
         if profile is None or profile.target_package != self._package_id:
             return ""
-        installed_version = self._library_controller.installed_version(
-            profile.target_package
-        )
+        installed_version = self._library_controller.installed_version(profile.target_package)
         if not self._settings.sign_apks:
             return "Enable APK signing to reuse this saved signing identity."
         if (
@@ -1796,9 +1797,7 @@ class AppController(QObject):
 
     @Property(list, notify=deviceChanged)
     def deviceChoices(self) -> list[dict[str, str]]:
-        return [
-            {"serial": serial, "label": label} for serial, label in self._device.candidates
-        ]
+        return [{"serial": serial, "label": label} for serial, label in self._device.candidates]
 
     @Property(list, notify=settingsChanged)
     def savedWirelessDevices(self) -> list[dict[str, str]]:
@@ -1872,9 +1871,7 @@ class AppController(QObject):
                 entries.append(
                     {"kind": "disconnect", "label": "Disconnect wireless", "value": ""}
                 )
-            entries.append(
-                {"kind": "settings", "label": "Connect to an address…", "value": ""}
-            )
+            entries.append({"kind": "settings", "label": "Connect to an address…", "value": ""})
         for entry in entries:
             entry.setdefault("checked", False)
             entry.setdefault("detail", "")
@@ -2088,8 +2085,7 @@ class AppController(QObject):
                 self._direct_library_update_package = requested_package
                 self._package_id = ""
                 self._set_notice(
-                    "That APK belongs to a different app than the one selected on the "
-                    "Quest.",
+                    "That APK belongs to a different app than the one selected on the Quest.",
                     "error",
                 )
                 self._record_event(
@@ -2176,8 +2172,7 @@ class AppController(QObject):
         previous = library.installed_version(profile.target_package)
         detail = f" Quest {previous} → {current}." if previous and current else "."
         self._set_notice(
-            "Saved app ID and signing identity restored automatically"
-            + detail,
+            "Saved app ID and signing identity restored automatically" + detail,
             "success",
         )
         self._record_event(
@@ -2304,9 +2299,10 @@ class AppController(QObject):
         if not self._device.connected or not self._device.serial:
             self._set_notice("Connect and authorize one Quest before installing.", "warning")
             return
-        if self._device.free_bytes is not None and bundle.total_size > self._device.free_bytes:
+        required = bundle.total_size - (bundle.apk.stat().st_size if retry_only else 0)
+        if self._device.free_bytes is not None and required > self._device.free_bytes:
             self._set_notice(
-                f"This game needs {format_bytes(bundle.total_size)}, but the Quest only has "
+                f"This transfer needs {format_bytes(required)}, but the Quest only has "
                 f"{format_bytes(self._device.free_bytes)} free.",
                 "error",
             )
@@ -2324,8 +2320,7 @@ class AppController(QObject):
         self._install_log_step = self._install_message
         if retry_only:
             self._set_notice(
-                f"Retrying {len(bundle.obbs)} failed OBB file"
-                f"{'s' if len(bundle.obbs) != 1 else ''}…"
+                f"Retrying {len(bundle.obbs)} OBBs and {len(bundle.extra_files)} extra files…"
             )
         else:
             self._set_notice(
@@ -2414,6 +2409,7 @@ class AppController(QObject):
                 bundle,
                 error=str(exc),
                 failed_obbs=exc.failed_obbs,
+                failed_extra_files=exc.failed_extra_files,
                 apk_installed=bool(getattr(exc, "apk_installed", False)),
             )
         except Exception as exc:
@@ -2509,13 +2505,27 @@ class AppController(QObject):
                 (("After", self._elapsed(self._install_started_at)),),
             )
         elif raw_outcome.error:
-            if raw_outcome.failed_obbs:
-                self._retry_full_bundle = raw_outcome.bundle
+            if raw_outcome.failed_obbs or raw_outcome.failed_extra_files:
+                previous = self._retry_full_bundle
+                if previous is None or (
+                    previous.root != raw_outcome.bundle.root
+                    or previous.apk != raw_outcome.bundle.apk
+                    or previous.package_name != raw_outcome.bundle.package_name
+                ):
+                    self._retry_full_bundle = raw_outcome.bundle
                 self._retry_reinstall = not raw_outcome.apk_installed
                 self._retry_bundle = (
                     raw_outcome.bundle
                     if self._retry_reinstall
-                    else replace(raw_outcome.bundle, obbs=raw_outcome.failed_obbs)
+                    else replace(
+                        raw_outcome.bundle,
+                        obbs=raw_outcome.failed_obbs,
+                        auxiliary_files=(
+                            raw_outcome.failed_extra_files
+                            if raw_outcome.failed_extra_files
+                            else raw_outcome.bundle.extra_files
+                        ),
+                    )
                 )
             else:
                 self._retry_bundle = None
@@ -2537,6 +2547,7 @@ class AppController(QObject):
                     ("After", self._elapsed(self._install_started_at)),
                     ("Reason", raw_outcome.error),
                     ("Failed OBB files", str(len(raw_outcome.failed_obbs))),
+                    ("Pending extra files", str(len(raw_outcome.failed_extra_files))),
                 ),
             )
         else:
@@ -2551,6 +2562,8 @@ class AppController(QObject):
             if full_bundle is not None:
                 # A retry re-sends only the failed subset; report the whole game.
                 obb_count = max(obb_count, len(full_bundle.obbs))
+                raw_outcome = replace(raw_outcome, bundle=full_bundle)
+            assert raw_outcome.result is not None
             uploaded_obbs = sum(item.action == "uploaded" for item in raw_outcome.result.obbs)
             reused_obbs = sum(
                 item.action == "renamed on Quest" for item in raw_outcome.result.obbs
@@ -2558,7 +2571,8 @@ class AppController(QObject):
             unchanged_obbs = sum(item.action == "unchanged" for item in raw_outcome.result.obbs)
             self._set_notice(
                 f"Install verified: APK and {obb_count} OBB file"
-                f"{'s' if obb_count != 1 else ''} synchronized on the Quest.",
+                f"{'s' if obb_count != 1 else ''} and "
+                f"{len(raw_outcome.bundle.extra_files)} extra files synchronized on the Quest.",
                 "success",
             )
             self._record_event(
@@ -2836,10 +2850,11 @@ class AppController(QObject):
         tone = (
             "success" if self._preflight.ready and not self._preflight.warnings else "warning"
         )
-        busy_or_done = (
-            self._build_state in {"running", "complete", "failed"}
-            or self._install_state in {"running", "complete", "failed"}
-        )
+        busy_or_done = self._build_state in {
+            "running",
+            "complete",
+            "failed",
+        } or self._install_state in {"running", "complete", "failed"}
         if not preserve_notice and not busy_or_done:
             self._set_notice(self._preflight.summary, tone)
         self.readinessChanged.emit()

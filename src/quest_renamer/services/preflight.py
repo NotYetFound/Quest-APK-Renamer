@@ -120,9 +120,7 @@ class AutomaticPreflight:
             )
         )
 
-        patch_only = (
-            PATCH_ID in request.patches and request.package_name == source.package_name
-        )
+        patch_only = PATCH_ID in request.patches and request.package_name == source.package_name
         identity_problem = package_id_error(
             request.package_name,
             source.package_name,
@@ -191,6 +189,12 @@ class AutomaticPreflight:
             )
         )
 
+        try:
+            obb_size += sum(path.stat().st_size for path in source.extra_files)
+        except (OSError, ValueError) as exc:
+            checks.append(
+                ReadinessCheck("extra_files", "Extra game files", CheckState.FAILED, str(exc))
+            )
         host_required = _host_space_requirement(apk_size, obb_size) if apk_exists else 0
         host_state = CheckState.PASSED
         host_detail = "There is enough working space on this computer."
@@ -212,9 +216,7 @@ class AutomaticPreflight:
             if same_drive:
                 if output_free < host_required:
                     host_state = CheckState.FAILED
-                    host_detail = (
-                        "The output drive does not have enough free working space."
-                    )
+                    host_detail = "The output drive does not have enough free working space."
             else:
                 assert cache_probe is not None
                 cache_free = shutil.disk_usage(cache_probe).free

@@ -30,6 +30,7 @@ from quest_renamer.infrastructure.build_recovery import (
 )
 from quest_renamer.infrastructure.bundle_output import (
     copy_file,
+    extra_package_files,
     obb_destinations,
     write_build_report,
     write_release_manifest,
@@ -194,9 +195,7 @@ class StagedApkBuildEngine:
         elif output.exists() and (not output.is_dir() or any(output.iterdir())):
             raise BuildError("The output folder already exists and is not empty.")
         try:
-            planned_obbs = (
-                obb_destinations(request, output) if request.copy_obbs else ()
-            )
+            planned_obbs = obb_destinations(request, output) if request.copy_obbs else ()
         except ValueError as exc:
             raise BuildError(str(exc)) from exc
         try:
@@ -478,6 +477,37 @@ class StagedApkBuildEngine:
                         completed += source_obb.stat().st_size
                         obb_outputs.append(destination)
 
+                extra_outputs: list[Path] = []
+                extras = extra_package_files(request) if request.copy_obbs else ()
+                for index, (source_extra, relative) in enumerate(extras, start=1):
+                    progress(
+                        0.95 + 0.005 * (index - 1) / len(extras),
+                        f"Copying OBB-folder file {index} of {len(extras)} • "
+                        f"{source_extra.name}",
+                    )
+                    destination = staging / relative
+
+                    def report_extra_copy(
+                        copied: int,
+                        total: int,
+                        *,
+                        number: int = index,
+                        name: str = source_extra.name,
+                    ) -> None:
+                        fraction = copied / total if total else 1.0
+                        progress(
+                            0.95 + 0.005 * ((number - 1 + fraction) / len(extras)),
+                            f"Copying extra file {number} of {len(extras)} • {name} • "
+                            f"{_format_bytes(copied)} of {_format_bytes(total)}",
+                        )
+
+                    copy_file(
+                        source_extra, destination, token=token, progress=report_extra_copy
+                    )
+                    extra_outputs.append(destination)
+                if extra_outputs:
+                    log(f"Copied {len(extra_outputs)} non-OBB file(s) from the OBB folder.")
+
                 progress(0.96, "Writing bundle metadata")
                 manifest = write_release_manifest(
                     request,
@@ -493,6 +523,7 @@ class StagedApkBuildEngine:
                     tuple(obb_outputs),
                     rewrite,
                     token=token,
+                    extra_files=tuple(extra_outputs),
                 )
                 app_icon = cache_decoded_app_icon(
                     decoded,

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from quest_renamer.domain.package_files import package_extra_files, validate_extra_path
 from quest_renamer.domain.signers import SignerIdentity
 
 
@@ -29,10 +30,20 @@ class BundleDraft:
     signer_identity: SignerIdentity | None = None
     signer_lineage: str = ""
     managed_obb_names: tuple[str, ...] = ()
+    # None discovers the complete set; a tuple pins the subset for transfer retry.
+    auxiliary_files: tuple[Path, ...] | None = None
+
+    @property
+    def extra_files(self) -> tuple[Path, ...]:
+        if self.auxiliary_files is None:
+            return package_extra_files(self.root, self.package_name)
+        for path in self.auxiliary_files:
+            validate_extra_path(path, self.root / self.package_name)
+        return self.auxiliary_files
 
     @property
     def total_size(self) -> int:
-        paths = (self.apk, *self.obbs)
+        paths = (self.apk, *self.obbs, *self.extra_files)
         return sum(path.stat().st_size for path in paths if path.is_file())
 
 
