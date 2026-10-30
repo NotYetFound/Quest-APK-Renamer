@@ -30,6 +30,7 @@ The renamed APK and OBB files are saved in a separate ` - Renamed` folder. Your 
 - Rename Quest APK package IDs
 - Install renamed copies beside the original game
 - Automatic APK and OBB handling
+- Preserve and install extra game data inside the OBB folder, with verification and selective retry
 - APK rebuilding, signing, and verification
 - USB and wireless ADB support
 - Automatic Quest detection

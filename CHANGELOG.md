@@ -4,6 +4,8 @@ All notable changes to Quest APK Renamer are recorded here.
 
 ## Unreleased
 
+## [1.5.0] - 2026-10-30
+
 ### Fixed
 
 - Non-OBB files inside a game's OBB folder (`<package>/`) are now copied into the renamed
