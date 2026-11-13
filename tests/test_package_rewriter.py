@@ -49,6 +49,34 @@ class PackageRewriterTests(unittest.TestCase):
             self.assertEqual(asset.read_text(encoding="utf-8"), '"com.example.game"')
             self.assertEqual(result.preserved_files, ("assets/config.json",))
 
+    def test_unexpanded_application_id_placeholders_get_the_new_id(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            decoded = Path(temporary)
+            manifest = decoded / "AndroidManifest.xml"
+            manifest.write_text(
+                '<manifest package="com.beatgames.beatsaber"><application>'
+                '<provider android:authorities="${applicationId}.androidxstartup" '
+                'android:name="androidx.startup.InitializationProvider"/>'
+                '<provider android:authorities="${packageName}.fileprovider" '
+                'android:name="androidx.core.content.FileProvider"/>'
+                "</application></manifest>",
+                encoding="utf-8",
+            )
+
+            result = replace_package_references(
+                decoded,
+                "com.beatgames.beatsaber",
+                "com.dev.beatgames.beatsaber",
+                token=CancellationToken(),
+            )
+
+            text = manifest.read_text(encoding="utf-8")
+            self.assertNotIn("${", text)
+            self.assertIn('"com.dev.beatgames.beatsaber.androidxstartup"', text)
+            self.assertIn('"com.dev.beatgames.beatsaber.fileprovider"', text)
+            self.assertIn('"androidx.startup.InitializationProvider"', text)
+            self.assertEqual(result.changed_occurrences, 3)
+
     def test_java_class_names_survive_so_native_code_still_binds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             decoded = Path(temporary)

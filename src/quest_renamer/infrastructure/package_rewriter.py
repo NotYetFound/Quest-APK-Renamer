@@ -49,6 +49,13 @@ _QUERIES_BLOCK = re.compile(r"<queries\b.*?</queries>", re.DOTALL)
 _PACKAGE_NAME_ELEMENT = re.compile(r'(<package\b[^>]*\bandroid:name=")([^"]*)(")')
 _TARGET_PACKAGE = re.compile(r'(\bandroid:targetPackage=")([^"]*)(")')
 _PLACEHOLDER = re.compile(rb"\x00(\d+)\x00")
+# Gradle placeholders some mod toolchains leave unexpanded; Android takes them literally,
+# so the original and the renamed copy would claim the same provider authority.
+_GRADLE_ID_PLACEHOLDER = re.compile(r"\$\{(?:applicationId|packageName)\}")
+
+
+def resolve_id_placeholders(text: str, package: str) -> tuple[str, int]:
+    return _GRADLE_ID_PLACEHOLDER.subn(package, text)
 
 
 def qualify_class_name(value: str, package: str) -> str:
@@ -202,10 +209,18 @@ def replace_package_references(
                     f"Android technical file could not be read: {relative} ({exc})."
                 ) from exc
             saved: list[str] = []
+            resolved = 0
             if relative == MANIFEST_NAME:
                 text, qualified_components = qualify_manifest_components(
                     data.decode("utf-8", errors="surrogateescape"), old
                 )
+                text, resolved = resolve_id_placeholders(text, new)
+                if resolved and log:
+                    log(
+                        f"Resolved {resolved} unexpanded ${{applicationId}} placeholder(s) in "
+                        "the manifest so provider authorities no longer clash with the "
+                        "original app."
+                    )
                 if not rename_java_packages:
                     text, saved = protect_manifest_values(text, old)
                 data = text.encode("utf-8", errors="surrogateescape")
@@ -215,6 +230,7 @@ def replace_package_references(
             if saved:
                 updated = restore_manifest_values(updated, saved)
             namespace_references += namespace
+            occurrences += resolved
             if not occurrences and not (relative == MANIFEST_NAME and qualified_components):
                 continue
             try:
