@@ -11,6 +11,24 @@ from quest_renamer.services.preflight import AutomaticPreflight, default_output_
 
 
 class PreflightTests(unittest.TestCase):
+    def test_source_replacement_accepts_a_parent_path_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            request = self._request(root)
+            alias = root / "alias"
+            try:
+                alias.symlink_to(request.source.root, target_is_directory=True)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"Directory symlinks unavailable: {exc}")
+            source = replace(request.source, root=alias, apk=alias / request.source.apk.name)
+            replacement = replace(
+                request, source=source, output_root=alias, replace_source=True
+            )
+            preflight = AutomaticPreflight(tools_ready=True)
+            self.assertTrue(preflight.check(replacement).ready)
+            (request.source.root / "notes.txt").touch()
+            self.assertIn("notes.txt", preflight.check(replacement).summary)
+
     def test_skipped_game_data_does_not_consume_host_space_budget(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             request = self._request(Path(temporary))

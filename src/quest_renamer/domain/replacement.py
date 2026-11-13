@@ -21,6 +21,10 @@ def source_replacement_problem(request: BuildRequest) -> str:
         files = {source.apk, *source.obbs, *extras}
         if source.manifest is not None:
             files.add(source.manifest)  # regenerated in the new bundle
+        # Match the resolved root even when the original selection came through
+        # a path alias (e.g. /var on macOS or a short temp path on Windows).
+        # Do not resolve the filename: traversal must still reject linked entries.
+        files = {path.parent.resolve() / path.name for path in files}
         directories = {
             parent
             for path in files
