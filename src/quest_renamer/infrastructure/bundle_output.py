@@ -24,18 +24,25 @@ def copy_file(
     *,
     token: CancellationToken,
     progress: Callable[[int, int], None] | None = None,
-) -> None:
+    hash_output: bool = False,
+) -> str:
+    """Copy a file, optionally returning the SHA-256 of the copied bytes."""
+    token.raise_if_cancelled()
     destination.parent.mkdir(parents=True, exist_ok=True)
     total = source.stat().st_size
     copied = 0
+    digest = hashlib.sha256() if hash_output else None
     with source.open("rb") as source_handle, destination.open("wb") as destination_handle:
         while chunk := source_handle.read(8 * 1024 * 1024):
             token.raise_if_cancelled()
             destination_handle.write(chunk)
+            if digest is not None:
+                digest.update(chunk)
             copied += len(chunk)
             if progress:
                 progress(copied, total)
     shutil.copystat(source, destination)
+    return digest.hexdigest() if digest is not None else ""
 
 
 def obb_destination(source: Path, request: BuildRequest, output_root: Path) -> Path:
@@ -78,14 +85,10 @@ def write_release_manifest(
     obbs: tuple[Path, ...],
     *,
     release_name: str = "",
+    extra_files: tuple[Path, ...] = (),
 ) -> Path:
     """Write ``release.manifest``; ``release_name`` is the final visible folder name."""
-    total_size = apk.stat().st_size + sum(path.stat().st_size for path in obbs)
-    total_size += sum(
-        path.stat().st_size
-        for path in (output_root / relative for _, relative in extra_package_files(request))
-        if path.is_file()
-    )
+    total_size = sum(path.stat().st_size for path in (apk, *obbs, *extra_files))
     updated = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d %H:%M UTC")
     rows = [
         ["#VRPRELEASEMANIFEST 1.0"],
@@ -116,12 +119,14 @@ def write_release_manifest(
         ["type", "name", "size"],
         ["f", f"./{apk.name}", str(apk.stat().st_size)],
     ]
-    if obbs:
-        rows.append(["d", f"./{request.package_name}", "0"])
-        rows.extend(
-            ["f", f"./{obb.relative_to(output_root).as_posix()}", str(obb.stat().st_size)]
-            for obb in obbs
-        )
+    directories: set[Path] = set()
+    for path in (*obbs, *extra_files):
+        relative = path.relative_to(output_root)
+        for parent in reversed(relative.parents):
+            if parent != Path(".") and parent not in directories:
+                rows.append(["d", f"./{parent.as_posix()}", "0"])
+                directories.add(parent)
+        rows.append(["f", f"./{relative.as_posix()}", str(path.stat().st_size)])
     path = output_root / "release.manifest"
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle, delimiter=";", lineterminator="\n")
@@ -147,6 +152,7 @@ def write_build_report(
     *,
     token: CancellationToken,
     extra_files: tuple[Path, ...] = (),
+    apk_hash: str = "",
 ) -> Path:
     created = dt.datetime.now(dt.UTC)
     source_signer = (
@@ -154,7 +160,7 @@ def write_build_report(
         if request.source.signer_identity is not None
         else "Unrecognized or unavailable"
     )
-    apk_hash = sha256_file(apk, token)
+    apk_hash = apk_hash or sha256_file(apk, token)
     obb_rows = [
         {
             "source": request.source.obbs[index].name

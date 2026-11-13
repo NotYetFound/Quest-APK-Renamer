@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import shutil
@@ -14,7 +15,7 @@ from quest_renamer.infrastructure.apk_build_engine import (
     activate_source_replacement,
 )
 from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
-from quest_renamer.infrastructure.process_runner import CommandResult
+from quest_renamer.infrastructure.process_runner import CommandFailed, CommandResult
 from quest_renamer.infrastructure.toolchain import Toolchain
 
 
@@ -61,6 +62,60 @@ class RecordingToolRunner(SimulatedToolRunner):
 
 
 class BuildEngineTests(unittest.TestCase):
+    def test_ambiguous_signer_output_cannot_skip_verification_or_replace_output(self) -> None:
+        class RejectingVerifier(SimulatedToolRunner):
+            def run(self, arguments: object, **kwargs: object) -> CommandResult:
+                result = super().run(arguments, **kwargs)
+                if "--onlyVerify" in result.command:
+                    raise CommandFailed(result.command, 1, ("Signature verification failed",))
+                if "--apks" in result.command:
+                    return CommandResult(
+                        result.command, 0,
+                        ("Signature verification failed: signature verified: false",),
+                    )
+                return result
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            apk = source / "game.apk"
+            apk.write_bytes(b"apk")
+            output = root / "output"
+            output.mkdir()
+            (output / "old.txt").write_bytes(b"old output")
+            request = BuildRequest(
+                BundleDraft(source, apk, package_name="com.example.game"),
+                "com.dev.example.game", output, replace_output=True,
+            )
+            engine = self._engine(root)
+            engine.runner = RejectingVerifier()  # type: ignore[assignment]
+            with self.assertRaisesRegex(BuildError, "Signature verification failed"):
+                engine.build(request)
+            self.assertEqual(list(output.iterdir()), [output / "old.txt"])
+            self.assertEqual((output / "old.txt").read_bytes(), b"old output")
+
+    def test_source_replacement_rejects_exact_apk_and_unrelated_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            apk = source / "game.apk"
+            apk.write_bytes(b"apk")
+            (source / "notes.txt").write_bytes(b"notes")
+            for exact, message in ((True, "individual APK"), (False, "notes.txt")):
+                with self.subTest(exact=exact):
+                    request = BuildRequest(
+                        BundleDraft(
+                            source, apk, package_name="com.example.game", selected_as_apk=exact,
+                        ),
+                        "com.dev.example.game", source, replace_source=True,
+                    )
+                    with self.assertRaisesRegex(BuildError, message):
+                        self._engine(root).build(request)
+            self.assertEqual(apk.read_bytes(), b"apk")
+            self.assertEqual((source / "notes.txt").read_bytes(), b"notes")
+
     def _engine(self, root: Path, **kwargs: object) -> StagedApkBuildEngine:
         java = root / "java"
         keytool = root / "keytool"
@@ -128,6 +183,8 @@ class BuildEngineTests(unittest.TestCase):
             self.assertEqual(result.apk.read_bytes(), b"signed apk")
             self.assertTrue(result.manifest.is_file())
             self.assertTrue(result.report.is_file())
+            report = json.loads(result.report.read_text(encoding="utf-8"))
+            self.assertEqual(report["apk"]["sha256"], hashlib.sha256(b"signed apk").hexdigest())
             self.assertEqual(len(result.obbs), 1)
             self.assertEqual(
                 result.obbs[0].name,
@@ -169,6 +226,9 @@ class BuildEngineTests(unittest.TestCase):
             renamed = result.output_root / "com.dev.example.game"
             self.assertEqual((renamed / "settings.json").read_text(), "{}")
             self.assertEqual((renamed / "extra" / "pack.dat").read_bytes(), b"pack")
+            manifest = result.manifest.read_text(encoding="utf-8-sig")
+            self.assertIn("d;./com.dev.example.game/extra;0", manifest)
+            self.assertIn("f;./com.dev.example.game/extra/pack.dat;4", manifest)
             self.assertEqual(len(result.obbs), 1)
             report = json.loads(result.report.read_text(encoding="utf-8"))
             self.assertEqual(

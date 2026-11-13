@@ -2,7 +2,36 @@
 
 All notable changes to Quest APK Renamer are recorded here.
 
-## Unreleased
+## [1.5.2] - 2026-11-13
+
+### Added
+
+- Optional first-launch tutorial with animated dashboard guidance and replay from Settings.
+- A one-time GitHub thank-you after two successful package renames, including bulk builds.
+- Bug-report shortcuts alongside operation errors.
+
+### Changed
+
+- Existing output folders offer a choice to cancel, replace, or build into a numbered copy.
+- The app's Qt Quick style no longer leaks into desktop apps launched from it.
+
+### Fixed
+
+- Refuse unsafe source-folder swaps and keep previous output until its replacement is ready.
+- Explicitly verify signed APKs before publishing, list auxiliary files in the release manifest,
+  and exclude skipped game data from free-space estimates.
+- Settings scrolls directly with the wheel or touchpad, without focus-driven jumps.
+- Remember the first-launch tutorial prompt as soon as it appears, even if the app closes
+  before the user answers it. The tutorial remains available in Settings.
+- Resolve leftover application ID placeholders in manifest provider authorities so a renamed
+  copy can install beside the original without changing component class names or labels.
+
+### Performance
+
+- Scan selected game folders and run Dashboard readiness checks in the background.
+- Scan OBB folders without resolving every file's parent paths, and avoid rescanning the source
+  when writing build metadata or logging install size.
+- Compute the APK report checksum while copying the finished APK, avoiding a second full read.
 
 ## [1.5.0] - 2026-10-30
 

@@ -15,6 +15,7 @@ from quest_renamer.domain.models import (
 from quest_renamer.domain.obb_names import ObbNameError, renamed_obb_filenames
 from quest_renamer.domain.package_ids import package_id_error
 from quest_renamer.domain.preflight import PreflightResult
+from quest_renamer.domain.replacement import source_replacement_problem
 from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 
 MIB = 1024 * 1024
@@ -86,7 +87,7 @@ class AutomaticPreflight:
                 apk_exists = False
         obb_size = 0
         obbs_exist = True
-        for path in source.obbs:
+        for path in source.obbs if request.copy_obbs else ():
             if not path.is_file():
                 obbs_exist = False
                 continue
@@ -102,7 +103,7 @@ class AutomaticPreflight:
             source_problem = "The selected APK cannot be read."
         elif not obbs_exist:
             source_problem = "One or more selected OBB files no longer exist."
-        elif source.obbs:
+        elif request.copy_obbs and source.obbs:
             try:
                 renamed_obb_filenames(
                     source.obbs,
@@ -150,21 +151,15 @@ class AutomaticPreflight:
             )
             if output != source_root:
                 output_problem = "Source replacement must use the exact source folder."
-            elif (
-                source_root == Path(source_root.anchor) or source_root == Path.home().resolve()
-            ):
-                output_problem = "This source folder is too broad to replace safely."
-            elif not os.access(source_root.parent, os.W_OK):
-                output_problem = "The source folder's parent cannot be written to."
-            elif source.obbs and not request.copy_obbs:
-                output_problem = (
-                    "Source replacement requires OBB copying so the folder stays complete."
-                )
+            else:
+                output_problem = source_replacement_problem(request)
         elif _same_or_inside(output, source_root):
             output_problem = "The output folder cannot be inside the source folder."
         elif _same_or_inside(source_root, output):
             output_problem = "The output folder cannot contain the source folder."
-        elif output.exists() and (not output.is_dir() or any(output.iterdir())):
+        elif output.exists() and (
+            not output.is_dir() or (not request.replace_output and any(output.iterdir()))
+        ):
             output_problem = "The output folder already exists and is not empty."
         elif not os.access(_existing_ancestor(output.parent), os.W_OK):
             output_problem = "The save location cannot be written to."
@@ -190,7 +185,8 @@ class AutomaticPreflight:
         )
 
         try:
-            obb_size += sum(path.stat().st_size for path in source.extra_files)
+            if request.copy_obbs:
+                obb_size += sum(path.stat().st_size for path in source.extra_files)
         except (OSError, ValueError) as exc:
             checks.append(
                 ReadinessCheck("extra_files", "Extra game files", CheckState.FAILED, str(exc))

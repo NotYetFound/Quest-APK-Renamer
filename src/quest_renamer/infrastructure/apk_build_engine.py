@@ -14,6 +14,7 @@ from quest_renamer.domain.build import BuildError, BuildResult, PackageRewriteRe
 from quest_renamer.domain.library import profile_id
 from quest_renamer.domain.models import BuildRequest
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
+from quest_renamer.domain.replacement import source_replacement_problem
 from quest_renamer.domain.signers import (
     build_lineage_dn,
     describe_previous_signer,
@@ -46,7 +47,6 @@ from quest_renamer.infrastructure.process_runner import (
     CommandTimedOut,
     ProcessRunner,
 )
-from quest_renamer.infrastructure.signer_inspection import parse_signature_details
 from quest_renamer.infrastructure.signing_identity import (
     SigningIdentityError,
     SigningIdentityStore,
@@ -181,18 +181,37 @@ class StagedApkBuildEngine:
                 "The source package ID is unknown; analyze the APK before building."
             )
 
+        if request.replace_output and request.output_root.is_symlink():
+            raise BuildError("A linked output folder cannot be replaced safely.")
         output = request.output_root.resolve(strict=False)
         source_root = request.source.root.resolve(strict=False)
+        existing_output = None
+        if request.replace_output:
+            if request.replace_source or not output.is_dir():
+                raise BuildError("The output folder is no longer available for replacement.")
+            existing_output = output.stat()
         if request.replace_source:
             if output != source_root:
                 raise BuildError("Source replacement must target the exact source folder.")
             if not source_root.is_dir() or request.source.apk.parent.resolve() != source_root:
                 raise BuildError("The selected source is not a safe, direct game folder.")
-            if request.source.obbs and not request.copy_obbs:
-                raise BuildError(
-                    "Source replacement requires OBB copying so the folder stays complete."
-                )
-        elif output.exists() and (not output.is_dir() or any(output.iterdir())):
+            try:
+                source_auxiliary = request.source.extra_files
+            except (OSError, ValueError) as exc:
+                raise BuildError(f"Could not check the source folder: {exc}") from exc
+            request = replace(
+                request,
+                source=replace(request.source, auxiliary_files=source_auxiliary),
+            )
+            if problem := source_replacement_problem(request):
+                raise BuildError(problem)
+        elif (
+            output.is_relative_to(source_root) or source_root.is_relative_to(output)
+        ):
+            raise BuildError("The output folder and source folder must not overlap.")
+        elif existing_output is None and output.exists() and (
+            not output.is_dir() or any(output.iterdir())
+        ):
             raise BuildError("The output folder already exists and is not empty.")
         try:
             planned_obbs = obb_destinations(request, output) if request.copy_obbs else ()
@@ -376,7 +395,7 @@ class StagedApkBuildEngine:
                     signing_identity = identity
                     signed.mkdir()
                     progress(0.67, "Signing and aligning APK")
-                    sign_result = self.runner.run(
+                    self.runner.run(
                         (
                             self.toolchain.java,
                             "-jar",
@@ -407,27 +426,18 @@ class StagedApkBuildEngine:
                         raise BuildError("The signer completed but did not produce an APK.")
                     built_apk = candidates[0]
                     progress(0.78, "Verifying APK signature")
-                    # uber-apk-signer verifies as part of signing and prints the result;
-                    # trust that report and only start a second JVM when it is absent.
-                    sign_report = parse_signature_details("\n".join(sign_result.output), ())
-                    if sign_report.verified:
-                        log(
-                            "Signature verified by the signer run: "
-                            + ", ".join(sign_report.schemes).upper()
-                        )
-                    else:
-                        self.runner.run(
-                            (
-                                self.toolchain.java,
-                                "-jar",
-                                self.toolchain.signer,
-                                "--apks",
-                                built_apk,
-                                "--onlyVerify",
-                            ),
-                            token=token,
-                            log=log,
-                        )
+                    self.runner.run(
+                        (
+                            self.toolchain.java,
+                            "-jar",
+                            self.toolchain.signer,
+                            "--apks",
+                            built_apk,
+                            "--onlyVerify",
+                        ),
+                        token=token,
+                        log=log,
+                    )
 
                 progress(0.83, "Saving APK")
                 apk_output = staging / f"{request.package_name}.apk"
@@ -439,7 +449,13 @@ class StagedApkBuildEngine:
                         f"Saving APK • {_format_bytes(copied)} of {_format_bytes(total)}",
                     )
 
-                copy_file(built_apk, apk_output, token=token, progress=report_apk_copy)
+                apk_hash = copy_file(
+                    built_apk,
+                    apk_output,
+                    token=token,
+                    progress=report_apk_copy,
+                    hash_output=True,
+                )
 
                 obb_outputs: list[Path] = []
                 if request.copy_obbs and request.source.obbs:
@@ -515,6 +531,7 @@ class StagedApkBuildEngine:
                     apk_output,
                     tuple(obb_outputs),
                     release_name=output.name,
+                    extra_files=tuple(extra_outputs),
                 )
                 report = write_build_report(
                     request,
@@ -524,6 +541,7 @@ class StagedApkBuildEngine:
                     rewrite,
                     token=token,
                     extra_files=tuple(extra_outputs),
+                    apk_hash=apk_hash,
                 )
                 app_icon = cache_decoded_app_icon(
                     decoded,
@@ -534,6 +552,10 @@ class StagedApkBuildEngine:
 
             recovery: Path | None = None
             if request.replace_source:
+                if request.source.root.resolve() != source_root:
+                    raise BuildError("The source folder changed during the build.")
+                if problem := source_replacement_problem(request):
+                    raise BuildError(problem)
                 progress(0.99, "Activating verified replacement")
                 recovery = activate_source_replacement(
                     source_root,
@@ -544,6 +566,19 @@ class StagedApkBuildEngine:
                     log("Previous source moved to Trash after the verified swap.")
                 else:
                     log(f"Trash was unavailable; previous source kept as: {recovery.name}")
+            elif existing_output is not None:
+                current_output = request.output_root.lstat()
+                if (
+                    request.output_root.is_symlink()
+                    or not os.path.samestat(current_output, existing_output)
+                    or current_output.st_mtime_ns != existing_output.st_mtime_ns
+                    or current_output.st_ctime_ns != existing_output.st_ctime_ns
+                ):
+                    raise BuildError(
+                        "The existing output changed during the build. It was not replaced."
+                    )
+                progress(0.99, "Activating verified output")
+                recovery = activate_source_replacement(output, staging, self.move_to_trash)
             else:
                 if output.exists():
                     output.rmdir()  # Preflight only permits an existing empty directory.

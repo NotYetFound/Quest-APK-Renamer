@@ -22,7 +22,6 @@ from quest_renamer.domain.installation import (
 from quest_renamer.domain.models import BundleDraft
 from quest_renamer.domain.obb_names import parse_obb_filename
 from quest_renamer.domain.operations import CancellationToken, OperationCancelled
-from quest_renamer.domain.package_files import validate_extra_path
 from quest_renamer.domain.package_ids import is_valid_package_id
 from quest_renamer.infrastructure.adb_device import find_adb
 from quest_renamer.infrastructure.process_runner import (
@@ -217,8 +216,9 @@ class AdbApkInstaller:
     @staticmethod
     def _extra_files(bundle: BundleDraft) -> tuple[tuple[Path, str], ...]:
         """Non-OBB files in the bundle's OBB folder with their path below it."""
+        folder = bundle.root / bundle.package_name
         return tuple(
-            (path, validate_extra_path(path, bundle.root / bundle.package_name))
+            (path, path.relative_to(folder).as_posix())
             for path in bundle.extra_files
         )
 
@@ -233,12 +233,13 @@ class AdbApkInstaller:
         """Push the other files of the OBB folder, skipping ones already identical."""
         extras = self._extra_files(bundle)
         remote_root = f"/sdcard/Android/obb/{bundle.package_name}"
-        total = sum(path.stat().st_size for path, _ in extras)
+        sizes = tuple(path.stat().st_size for path, _ in extras)
+        total = sum(sizes)
         completed = 0
         for index, (source, relative) in enumerate(extras, start=1):
             token.raise_if_cancelled()
             remote_path = f"{remote_root}/{relative}"
-            size = source.stat().st_size
+            size = sizes[index - 1]
 
             def report(
                 fraction: float,

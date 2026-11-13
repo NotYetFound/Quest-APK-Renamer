@@ -32,6 +32,7 @@ class BundleDraft:
     managed_obb_names: tuple[str, ...] = ()
     # None discovers the complete set; a tuple pins the subset for transfer retry.
     auxiliary_files: tuple[Path, ...] | None = None
+    selected_as_apk: bool = False
 
     @property
     def extra_files(self) -> tuple[Path, ...]:
@@ -71,6 +72,7 @@ class BuildRequest:
     app_label_suffix: str = ""
     # Legacy: move Java packages too (refused when native code binds to them).
     rename_java_packages: bool = False
+    replace_output: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -75,6 +75,10 @@ class BulkControllerTests(unittest.TestCase):
             self._game(parent / "Broken", "com.example.broken")
             builder = SelectiveBuilder()
             controller = self._controller(root, builder=builder)
+            renames: list[tuple[str, str]] = []
+            controller.renameSucceeded.connect(
+                lambda source, target: renames.append((source, target))
+            )
 
             controller.scanParent(QUrl.fromLocalFile(str(parent)))
             self._wait_until(lambda: controller.count == 2)
@@ -93,6 +97,7 @@ class BulkControllerTests(unittest.TestCase):
                 ["com.example.brokena", "com.example.firsta"],
             )
             self.assertIn("1 succeeded • 1 failed", controller.overviewText)
+            self.assertEqual(renames, [("com.example.first", "com.example.firsta")])
             states = [entry.status for entry in controller._model.entries()]
             self.assertEqual(states, ["Failed", "Built"])
 

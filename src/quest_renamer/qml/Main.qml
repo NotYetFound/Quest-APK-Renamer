@@ -23,6 +23,180 @@ ApplicationWindow {
     readonly property int pageMargin: 30
     property int pageIndex: 0
     property int requestedPage: 0
+    property int tutorialStep: 0
+    property bool tutorialToolDetour: false
+    readonly property bool tutorialInSettings: pageIndex === 4 && tutorialStep > 0
+                                               && (tutorialToolDetour || !toolController.allReady)
+    readonly property int tutorialStage: tutorialStep === 0 ? 0
+                                         : !appController.hasBundle ? 1
+                                         : tutorialStep < 3 ? 2 : tutorialStep
+    property bool welcomeShown: false
+    property bool thanksAnswered: false
+    readonly property Item tutorialTarget: tutorialInSettings ? repairToolsButton
+                                          : tutorialStage === 1 ? sourceRow
+                                          : tutorialStage === 2 ? packageField
+                                          : tutorialStage === 3 ? firmwareTourRow
+                                          : tutorialStage === 4 ? (appController.isBuilding || appController.hasBuildResult
+                                              ? operationPanel : buildButton)
+                                          : tutorialStage === 5 ? deviceChip
+                                          : tutorialStage === 6 ? installBuiltButton : null
+    readonly property Item tutorialEndTarget: tutorialInSettings ? null
+                                             : tutorialStage === 2 ? presetTourRow
+                                             : tutorialStage === 3 ? deleteTourRow
+                                             : tutorialStage === 5 && deviceMenu.visible ? deviceMenu.contentItem
+                                             : tutorialStage === 6 ? installFolderButton : null
+
+    function startTutorial() {
+        showPage(0)
+        tutorialToolDetour = false
+        tutorialStep = appController.hasBuildResult ? 4
+                     : appController.hasBundle ? 2 : 1
+    }
+
+    function positionTutorial() {
+        if (tutorialInSettings)
+            settingsScroll.ensureVisible(repairToolsButton)
+        else if (pageIndex === 0 && tutorialTarget) {
+            if (tutorialEndTarget)
+                dashboardScroll.ensureVisible(tutorialEndTarget)
+            dashboardScroll.ensureVisible(tutorialTarget)
+        }
+    }
+
+    onTutorialTargetChanged: Qt.callLater(positionTutorial)
+    onPageIndexChanged: {
+        if (pageIndex === 4 && tutorialStep > 0 && !toolController.allReady)
+            tutorialToolDetour = true
+        Qt.callLater(positionTutorial)
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        enabled: window.pageIndex === 0 && window.tutorialStep > 0 && !window.dialogActive
+        onActivated: window.tutorialStep = 0
+    }
+
+    readonly property bool dialogActive: quitDialog.visible || pickerFailureDialog.visible
+        || libraryImportDialog.visible || libraryDeleteDialog.visible || partialBuildDialog.visible
+        || signingBackupReminderDialog.visible || signingBackupCompletedDialog.visible
+        || outputConflictDialog.visible || signingRestoreConfirmationDialog.visible
+        || packageConflictDialog.visible || uninstallDialog.visible || replaceSourceDialog.visible
+        || oldOutputCleanupDialog.visible || bulkConfirmationDialog.visible
+        || welcomeDialog.visible || renameThanksDialog.visible || sourceHelpDialog.visible
+        || fileDialogController.isPicking
+
+    DecisionDialog {
+        id: sourceHelpDialog
+        heading: "What can I open?"
+        bodyText: "Use a standalone Quest APK, or a game folder with exactly one APK at the top level. A folder without OBB files is fine.\n\nIf the game has OBB files, put them next to the APK or inside a subfolder named for the original app ID (for example, com.studio.game). Keep any extra game data inside that app ID folder.\n\nExtract ZIP or other archives first. Split APK sets and bundles such as .apks and .xapk aren’t supported. If your folder has multiple APKs, select the standalone APK directly."
+        primaryText: "Got it"
+        secondaryText: ""
+    }
+
+    Timer {
+        interval: 1300
+        running: onboardingPromptsEnabled && window.active && !window.dialogActive
+                 && window.tutorialStep === 0 && !appController.isBusy && !bulkController.isBusy
+                 && ((!window.welcomeShown && appController.showTutorialPrompt)
+                     || (!window.thanksAnswered && appController.showRenameThanks
+                         && !(window.pageIndex === 2 && bulkController.hasOverview)))
+        onTriggered: {
+            if (!window.welcomeShown && appController.showTutorialPrompt)
+                welcomeDialog.open()
+            else
+                renameThanksDialog.open()
+        }
+    }
+
+    DecisionDialog {
+        id: welcomeDialog
+        heading: "Would you like to do a tutorial?"
+        bodyText: "Follow a short walkthrough to build a renamed copy of an app. You can replay it from Settings."
+        primaryText: "Yes, show me"
+        secondaryText: "Skip"
+        onOpened: {
+            window.welcomeShown = true
+            appController.markTutorialPromptShown()
+        }
+        onPrimaryChosen: window.startTutorial()
+    }
+
+    DecisionDialog {
+        id: renameThanksDialog
+        heading: "Thanks for using Quest APK Renamer!"
+        messageRows: [
+            { icon: "../assets/icon-github-star.svg", text: "If you like the app, give it a star on GitHub." },
+            { icon: "../assets/icon-github-issue.svg", text: "Found a bug or have an idea? Open an issue and let us know." }
+        ]
+        primaryText: "Star on GitHub"
+        secondaryText: "Dismiss"
+        tertiaryText: "Open an issue"
+        onPrimaryChosen: Qt.openUrlExternally("https://github.com/NotYetFound/Quest-APK-Renamer")
+        onTertiaryChosen: Qt.openUrlExternally("https://github.com/NotYetFound/Quest-APK-Renamer/issues/new/choose")
+        onClosed: {
+            window.thanksAnswered = true
+            appController.dismissRenameThanks()
+        }
+    }
+
+    DashboardTour {
+        objectName: "dashboardTour"
+        parent: Overlay.overlay
+        anchors.fill: parent
+        z: 100
+        step: (window.pageIndex === 0 || window.tutorialInSettings) && !window.dialogActive
+              ? window.tutorialStage : 0
+        target: window.tutorialTarget
+        endTarget: window.tutorialEndTarget
+        showSourceHelp: step === 1 && !window.tutorialInSettings
+        onOpenSourceHelp: sourceHelpDialog.open()
+        errorText: window.tutorialInSettings ? (toolController.tone === "error" ? toolController.status : "")
+                   : appController.noticeTone === "error" && !appController.isBusy && step >= 1 && step <= 4
+                   ? (step === 2 && !appController.tutorialSourceReady ? "Couldn’t read the APK’s app ID.\n" : "")
+                     + appController.notice : ""
+        showToolsAction: !window.tutorialInSettings && errorText.length > 0 && step === 2 && !toolController.allReady
+        advanceEnabled: window.tutorialInSettings ? !toolController.isBusy
+                        : step !== 2 || (appController.tutorialSourceReady && !appController.packageError)
+        advanceText: window.tutorialInSettings ? (toolController.allReady ? "Back to Dashboard" : "")
+                     : step === 6 ? "Finish"
+                     : step === 2 || step === 3 || step === 5
+                       || (step === 4 && appController.hasBuildResult) ? "Next" : ""
+        hint: window.tutorialInSettings
+              ? (toolController.isBusy ? "Getting the tools ready…"
+                 : toolController.allReady ? "You’re all set. Head back to the dashboard to pick up where you left off."
+                 : "Click Repair tools to get what’s missing. When it’s done, head back to the dashboard.")
+              : step === 1 ? "Click Browse to choose a game folder. You can also drop a Quest APK or folder here, or paste its path and press Enter."
+              : step === 2 ? (appController.isAnalyzing ? "Reading the app ID from your APK…"
+                             : !appController.tutorialSourceReady
+                               ? "The app ID isn’t ready. Check the dashboard message or choose another source."
+                               : "A different app ID lets this copy sit alongside the original on your Quest. Keep the suggestion, try a preset, or edit the ID yourself.")
+              : step === 3 ? "You can leave these as they are. Here’s what each one does:\n\nOlder firmware patch: Helps compatible APKs run on older Quest firmware.\n\nReplace source after build: Puts the verified build in place of your original folder. Leave it off to keep both.\n\nDelete installed folder after success: Cleans up the local built folder once the install on your Quest is verified."
+              : step === 4 ? (appController.isBuilding ? "Building your copy. You can follow the progress here."
+                           : appController.hasBuildResult ? "Your renamed copy is ready. Click Next to see how to install it on your Quest."
+                           : "Click Build renamed copy when you’re ready. You don’t need to plug in your Quest yet.")
+              : step === 5 ? (deviceMenu.visible
+                             ? "This panel shows connected headsets and saved Wi-Fi connections. For USB, plug in your Quest and approve USB debugging in the headset. For Wi-Fi, use Enable over USB while it’s connected, or use Add address if you already know its ADB address."
+                             : "Check here to see if your Quest is connected. Click the status to see USB and Wi-Fi options.")
+              : "If your Quest is connected, click Install built game to sideload this copy. Want to do it later? Click Finish."
+        onExitTour: window.tutorialStep = 0
+        onAdvance: {
+            if (window.tutorialInSettings) {
+                window.tutorialToolDetour = false
+                window.showPage(0)
+            } else if (step === 2)
+                window.tutorialStep = appController.isDirectLibraryUpdate ? 4 : 3
+            else {
+                if (step === 5)
+                    deviceMenu.close()
+                window.tutorialStep = step === 6 ? 0 : step + 1
+            }
+        }
+        onOpenTools: {
+            window.tutorialToolDetour = true
+            settingsScroll.contentY = 0
+            window.showPage(4)
+        }
+    }
 
     // Remember window placement and the last open page between sessions.
     Settings {
@@ -66,9 +240,8 @@ ApplicationWindow {
                 return
             window.showPage(0)
             fileDialogController.chooseFolder(
-                "game",
-                "Choose a Quest game folder",
-                appController.lastSourceFolder
+                "game", "Choose a Quest game folder",
+                appController.folderPath || appController.lastSourceFolder
             )
         }
     }
@@ -182,7 +355,9 @@ ApplicationWindow {
         bodyText: ""
         primaryText: "Close"
         secondaryText: "Open logs"
+        tertiaryText: "Report a bug"
         onSecondaryChosen: logWindow.openWindow()
+        onTertiaryChosen: appController.reportBug()
     }
 
     DecisionDialog {
@@ -258,13 +433,12 @@ ApplicationWindow {
         property string alternativePath: ""
         heading: "That save folder already exists"
         bodyText: "Choose a different numbered folder, replace the existing folder, or cancel.\n\nExisting: " + existingPath + "\n\nNumbered copy: " + alternativePath
-        primaryText: "Replace existing"
+        primaryText: "Use numbered copy"
         secondaryText: "Cancel"
-        tertiaryText: "Use numbered copy"
-        destructive: true
-        onPrimaryChosen: appController.replaceExistingOutput()
+        tertiaryText: "Replace existing"
+        onPrimaryChosen: appController.useNumberedOutput()
         onSecondaryChosen: appController.cancelOutputConflict()
-        onTertiaryChosen: appController.useNumberedOutput()
+        onTertiaryChosen: appController.replaceExistingOutput()
         onDismissed: appController.cancelOutputConflict()
     }
 
@@ -350,6 +524,14 @@ ApplicationWindow {
 
     Connections {
         target: appController
+        function onBundleChanged() {
+            if (window.tutorialStep > 1 && !appController.hasBundle)
+                window.tutorialStep = 1
+        }
+        function onReadinessChanged() {
+            if (window.tutorialStep >= 5 && !appController.hasBuildResult)
+                window.tutorialStep = appController.tutorialSourceReady ? 2 : 1
+        }
         function onPartialOutputChanged() {
             if (appController.partialOutputFolder)
                 partialBuildDialog.open()
@@ -490,7 +672,9 @@ ApplicationWindow {
                     width: 372
                     padding: 0
                     modal: false
-                    closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+                    closePolicy: window.tutorialStage === 5 && window.pageIndex === 0
+                                 ? Popup.CloseOnEscape
+                                 : Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
                     enter: Transition {
                         ParallelAnimation {
                             NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 110 }
@@ -987,12 +1171,18 @@ ApplicationWindow {
                                     onClicked: appController.startOver()
                                 }
                                 AppButton {
+                                    id: installBuiltButton
                                     text: "Install built game"
                                     enabled: appController.canInstallBuilt
                                     tip: "Install the APK and OBB files produced by the last build"
-                                    onClicked: appController.installBuiltFolder()
+                                    onClicked: {
+                                        if (window.tutorialStage === 6)
+                                            window.tutorialStep = 0
+                                        appController.installBuiltFolder()
+                                    }
                                 }
                                 AppButton {
+                                    id: installFolderButton
                                     text: appController.installActionLabel
                                     enabled: appController.canInstallFolder
                                     tip: "Choose a previously built game folder and install it"
@@ -1031,10 +1221,12 @@ ApplicationWindow {
                                     spacing: 7
                                     SectionLabel { text: "SOURCE" }
                                     RowLayout {
+                                        id: sourceRow
                                         Layout.fillWidth: true
                                         spacing: 8
                                         TextField {
                                             id: sourceField
+                                            objectName: "sourceField"
                                             Layout.fillWidth: true
                                             Layout.preferredHeight: 38
                                             enabled: !appController.isBusy
@@ -1069,8 +1261,7 @@ ApplicationWindow {
                                             enabled: !appController.isBusy
                                             tip: "Choose a game folder (Ctrl+O)"
                                             onClicked: fileDialogController.chooseFolder(
-                                                "game",
-                                                "Choose a Quest game folder",
+                                                "game", "Choose a Quest game folder",
                                                 appController.folderPath || appController.lastSourceFolder
                                             )
                                         }
@@ -1212,6 +1403,7 @@ ApplicationWindow {
                                             }
                                         }
                                         RowLayout {
+                                            id: presetTourRow
                                             spacing: 6
                                             readonly property bool tagsEnabled: appController.hasBundle
                                                                                 && !appController.isBuilding
@@ -1410,6 +1602,7 @@ ApplicationWindow {
                                             Layout.bottomMargin: 1
                                         }
                                         SettingRow {
+                                            id: firmwareTourRow
                                             visible: !appController.isDirectLibraryUpdate
                                             Layout.fillWidth: true
                                             compact: true
@@ -1435,6 +1628,7 @@ ApplicationWindow {
                                             compact: true
                                             enabled: !appController.isBusy
                                             title: "Delete installed folder after success"
+                                            id: deleteTourRow
                                             detail: "Only after the APK and every OBB are verified on Quest"
                                             checked: appController.settings.deleteSourceAfterInstall
                                             onChanged: value => appController.setSetting("delete_source_after_install", value)
@@ -1563,6 +1757,21 @@ ApplicationWindow {
                                         onClicked: appController.copyText(appController.notice)
                                     }
                                     AppButton {
+                                        visible: appController.noticeTone === "error" && !appController.isBusy
+                                        text: "Report a bug"
+                                        quiet: true
+                                        onClicked: appController.reportBug()
+                                    }
+                                    AppButton {
+                                        visible: appController.canRecheckBuild && !appController.isInstalling
+                                        text: "↻"
+                                        Accessible.name: "Refresh build checks"
+                                        tip: "Check the output folder and build requirements again"
+                                        quiet: true
+                                        onClicked: appController.recheckBuild()
+                                    }
+                                    AppButton {
+                                        id: buildButton
                                         text: appController.isInstalling ? "Cancel install"
                                               : appController.canRetryObbs ? appController.retryFilesLabel
                                               : appController.buildActionLabel
@@ -1651,6 +1860,14 @@ ApplicationWindow {
                                              && !bulkController.isBusy
                                     onClicked: libraryController.refresh()
                                 }
+                            }
+                            AppButton {
+                                visible: Boolean(libraryController.errorMessage)
+                                         || libraryController.actionFailed
+                                         || Boolean(libraryController.selected.identityError)
+                                text: "Report a bug"
+                                quiet: true
+                                onClicked: appController.reportBug()
                             }
                         }
 
@@ -2159,6 +2376,12 @@ ApplicationWindow {
                                             onClicked: bulkController.copyDetail(bulkRow.index)
                                         }
                                         AppButton {
+                                            visible: bulkRow.itemTone === "error" && !bulkController.isBusy
+                                            text: "Report a bug"
+                                            quiet: true
+                                            onClicked: appController.reportBug()
+                                        }
+                                        AppButton {
                                             text: "Remove"
                                             quiet: true
                                             enabled: !bulkController.isBusy
@@ -2353,6 +2576,10 @@ ApplicationWindow {
                 Item {
                     PageScroller {
                         id: settingsScroll
+                        objectName: "settingsScroll"
+                        scrollToMouseFocus: false
+                        wheelStep: 240
+                        pixelScrollScale: 2.0
                         anchors.fill: parent
                         page: settingsColumn
 
@@ -2462,6 +2689,13 @@ ApplicationWindow {
                                             }
                                         }
                                         AppButton {
+                                            visible: toolController.tone === "error" && !toolController.isBusy
+                                            text: "Report a bug"
+                                            quiet: true
+                                            onClicked: appController.reportBug()
+                                        }
+                                        AppButton {
+                                            id: repairToolsButton
                                             text: toolController.actionLabel
                                             enabled: !toolController.isBusy
                                             onClicked: toolController.runAction()
@@ -3110,6 +3344,12 @@ ApplicationWindow {
                                         font.pixelSize: 11
                                         wrapMode: Text.WordWrap
                                     }
+                                    AppButton {
+                                        visible: appController.wirelessTone === "error"
+                                        text: "Report a bug"
+                                        quiet: true
+                                        onClicked: appController.reportBug()
+                                    }
                                 }
                             }
 
@@ -3117,8 +3357,25 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 Text { text: "Quest APK Renamer  •  v" + appVersion; color: "#747474"; font.pixelSize: 10 }
                                 Item { Layout.fillWidth: true }
+                                AppButton {
+                                    text: "Replay tutorial"
+                                    quiet: true
+                                    enabled: !appController.isBusy && !bulkController.isBusy
+                                    onClicked: window.startTutorial()
+                                }
                                 AppButton { text: "Copy support info"; onClicked: appController.copySupportInformation() }
                                 AppButton { text: "Open data folder"; onClicked: appController.openDataFolder() }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                visible: appController.noticeTone === "error" && !appController.isBusy
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: appController.notice
+                                    color: "#e88780"
+                                    wrapMode: Text.Wrap
+                                }
+                                AppButton { text: "Report a bug"; quiet: true; onClicked: appController.reportBug() }
                             }
                         }
                     }

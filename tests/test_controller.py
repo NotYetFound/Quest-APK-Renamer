@@ -1,9 +1,11 @@
 import json
 import shutil
 import tempfile
+import threading
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from PySide6.QtCore import QCoreApplication, QUrl
 
@@ -15,11 +17,12 @@ from quest_renamer.domain.installation import (
     InstalledObb,
     InstalledPackageConflict,
 )
-from quest_renamer.domain.models import BundleDraft, DeviceSnapshot
+from quest_renamer.domain.models import BuildRequest, BundleDraft, DeviceSnapshot
 from quest_renamer.domain.settings import AppSettings
 from quest_renamer.domain.signers import SignerIdentity
 from quest_renamer.infrastructure.app_paths import AppPaths
 from quest_renamer.infrastructure.build_recovery import write_build_recovery
+from quest_renamer.infrastructure.local_bundles import LocalBundleInspector
 from quest_renamer.infrastructure.older_firmware_patch import PATCH_ID
 from quest_renamer.infrastructure.settings_store import JsonSettingsStore
 from quest_renamer.infrastructure.signing_backup import SigningIdentityManager
@@ -274,6 +277,78 @@ class ControllerTests(unittest.TestCase):
                 initial_folder(["--style", "Basic", str(folder)]), folder.resolve()
             )
 
+    def test_slow_source_scan_cannot_overwrite_new_selection(self) -> None:
+        started, release = threading.Event(), threading.Event()
+        completed: list[int] = []
+
+        class SlowInspector(LocalBundleInspector):
+            def inspect_folder(self, folder: Path) -> BundleDraft:
+                if folder.name == "first":
+                    started.set()
+                    if not release.wait(3):
+                        raise RuntimeError("Timed out waiting to release the scan")
+                return super().inspect_folder(folder)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in ("first", "second"):
+                (root / name).mkdir()
+                (root / name / f"{name}.apk").write_bytes(b"apk")
+            controller = AppController(paths=AppPaths(root / "data", root / "cache"))
+            controller._inspector = SlowInspector()
+            controller.sourceScanReady.connect(
+                lambda generation, *_: completed.append(generation)
+            )
+            try:
+                controller.chooseFolderPath(str(root / "first"))
+                self.assertTrue(started.wait(1))
+                self.assertFalse(controller.canBuild)
+                controller.chooseFolderPath(str(root / "second"))
+                self._wait_until(lambda: controller.apkName == "second.apk")
+            finally:
+                release.set()
+            self._wait_until(lambda: len(completed) == 2)
+            self.assertEqual(controller.apkName, "second.apk")
+
+    def test_live_preflight_waits_for_latest_app_id(self) -> None:
+        started, release = threading.Event(), threading.Event()
+        calls: list[str] = []
+        preflight = AutomaticPreflight(tools_ready=True)
+        check = preflight.check
+
+        def slow_check(request: BuildRequest, *, device: DeviceSnapshot | None = None):
+            calls.append(request.package_name)
+            if len(calls) == 1:
+                started.set()
+                if not release.wait(3):
+                    raise RuntimeError("Timed out waiting to release preflight")
+            return check(request, device=device)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "game"
+            source.mkdir()
+            (source / "game.apk").write_bytes(b"apk")
+            controller = AppController(
+                analyzer=ImmediateAnalyzer(),
+                build_engine=ImmediateBuilder(),
+                preflight_service=preflight,
+                paths=AppPaths(root / "data", root / "cache"),
+            )
+            with patch.object(preflight, "check", side_effect=slow_check):
+                try:
+                    controller.chooseFolderPath(str(source))
+                    self._wait_until(started.is_set)
+                    controller.setPackageId("com.intermediate.example.game")
+                    controller.setPackageId("com.latest.example.game")
+                    self.assertFalse(controller.canBuild)
+                    controller.requestBuild()
+                    self.assertFalse(controller.isBuilding)
+                finally:
+                    release.set()
+                self._wait_until(lambda: controller.canBuild)
+            self.assertEqual(calls, ["com.dev.example.game", "com.latest.example.game"])
+
     def test_controller_is_ready_after_a_bundle_is_selected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
@@ -290,6 +365,7 @@ class ControllerTests(unittest.TestCase):
 
             controller.chooseFolder(QUrl.fromLocalFile(str(folder)))
 
+            self._wait_until(lambda: controller.hasBundle)
             self.assertTrue(controller.hasBundle)
             self.assertEqual(controller.packageId, "com.dev.studio.game")
             self.assertTrue(controller.canBuild)
@@ -311,6 +387,7 @@ class ControllerTests(unittest.TestCase):
             )
 
             controller.chooseFolder(QUrl.fromLocalFile(str(selected)))
+            self._wait_until(lambda: controller.hasBundle)
             controller.applyTag("mr")
 
             self.assertTrue(controller.hasBundle)
@@ -348,6 +425,7 @@ class ControllerTests(unittest.TestCase):
             )
 
             controller.chooseFolderPath(str(source))
+            self._wait_until(lambda: controller.hasBundle)
             controller.chooseOutputParent(QUrl.fromLocalFile(str(destination)))
 
             self.assertEqual(
@@ -374,6 +452,7 @@ class ControllerTests(unittest.TestCase):
             controller.setSetting("older_firmware_patch", True)
             controller.setPackageId("com.example.game")
 
+            self._wait_until(lambda: controller.canBuild)
             self.assertTrue(controller.canBuild)
             self.assertEqual(controller.buildActionLabel, "Apply firmware patch")
             self.assertTrue(controller.olderFirmwareSupported)
@@ -493,6 +572,49 @@ class ControllerTests(unittest.TestCase):
             self.assertEqual(controller.sourcePackage, "com.example.game")
             self.assertEqual(controller.packageId, "com.dev.example.game")
             self.assertIn("built, signed", controller.notice)
+            self.assertFalse(controller.showRenameThanks)
+            controller.setPackageId("com.test.example.game")
+            self._wait_until(lambda: controller.canBuild)
+            controller.requestBuild()
+            controller.useNumberedOutput()
+            self._wait_until(lambda: controller.showRenameThanks)
+
+    def test_repaired_tools_retry_the_selected_apk(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "game.apk"
+            source.write_bytes(b"apk")
+            analyzer = ImmediateAnalyzer()
+            controller = AppController(
+                analyzer=analyzer, paths=AppPaths(data=root / "data", cache=root / "cache")
+            )
+            with patch.object(
+                analyzer, "analyze", side_effect=RuntimeError("Apktool is missing")
+            ):
+                controller.chooseFolder(QUrl.fromLocalFile(str(source)))
+                self._wait_until(lambda: controller.noticeTone == "error")
+            self.assertFalse(controller.tutorialSourceReady)
+            controller.refreshToolchainState(retry_analysis=True)
+            self._wait_until(lambda: controller.tutorialSourceReady)
+            self.assertEqual(Path(controller.apkPath), source.resolve())
+
+    def test_onboarding_choices_and_rename_threshold_persist(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = AppPaths(data=root / "data", cache=root / "cache")
+            controller = AppController(paths=paths)
+            self.assertTrue(controller.showTutorialPrompt)
+            controller.markTutorialPromptShown()
+            controller.record_successful_rename("com.example.game", "com.example.game")
+            controller.record_successful_rename("com.example.game", "com.dev.example.game")
+            controller = AppController(paths=paths)
+            self.assertFalse(controller.showTutorialPrompt)
+            self.assertFalse(controller.showRenameThanks)
+            controller.record_successful_rename("com.example.game", "com.qa.example.game")
+            self.assertTrue(controller.showRenameThanks)
+            controller.dismissRenameThanks()
+            controller = AppController(paths=paths)
+            self.assertFalse(controller.showRenameThanks)
 
     def test_selected_finished_folder_installs_apk_and_obbs_as_one_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -589,6 +711,7 @@ class ControllerTests(unittest.TestCase):
             controller.setSetting("delete_source_after_install", True)
             controller.chooseFolderPath(str(source))
 
+            self._wait_until(lambda: controller.hasBundle)
             controller.requestReplaceSource(True)
 
             self.assertEqual(confirmations, [True])
@@ -757,6 +880,14 @@ class ControllerTests(unittest.TestCase):
 
             controller.chooseFolderPath(str(source))
             self._wait_until(lambda: controller.canBuild)
+            moved = root / "moved-output"
+            existing.rename(moved)
+            self.assertTrue(controller.canBuild)
+            self.assertTrue(controller.canRecheckBuild)
+            controller.recheckBuild()
+            self._wait_until(lambda: controller.canBuild)
+            self.assertFalse(controller.canRecheckBuild)
+            moved.rename(existing)
             controller.requestBuild()
 
             self.assertEqual(len(prompts), 1)
@@ -770,7 +901,7 @@ class ControllerTests(unittest.TestCase):
                 (root / "source - Renamed (2)" / "com.dev.example.game.apk").is_file()
             )
 
-    def test_existing_output_can_be_moved_to_trash_then_replaced(self) -> None:
+    def test_existing_output_replacement_is_deferred_to_builder(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             source = root / "source"
@@ -784,10 +915,17 @@ class ControllerTests(unittest.TestCase):
             def trash(path: Path) -> None:
                 path.rename(trashed)
 
+            class ReplacementBuilder(ImmediateBuilder):
+                def build(self, request: BuildRequest, **kwargs: object) -> BuildResult:
+                    if not request.replace_output or not (existing / "old.txt").is_file():
+                        raise AssertionError("The existing output must reach the builder")
+                    trash(existing)
+                    return super().build(request, **kwargs)
+
             controller = AppController(
                 analyzer=ImmediateAnalyzer(),
                 preflight_service=AutomaticPreflight(tools_ready=True),
-                build_engine=ImmediateBuilder(),
+                build_engine=ReplacementBuilder(),
                 move_to_trash=trash,
                 paths=AppPaths(data=root / "data", cache=root / "cache"),
             )

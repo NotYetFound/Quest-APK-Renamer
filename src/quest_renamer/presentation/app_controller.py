@@ -73,6 +73,8 @@ from quest_renamer.services.preflight import default_output_folder
 
 @dataclass(frozen=True, slots=True)
 class AnalysisOutcome:
+    bundle: BundleDraft | None = None
+    size: int = 0
     result: ApkAnalysis | None = None
     error: str = ""
     cancelled: bool = False
@@ -129,6 +131,8 @@ class AppController(QObject):
     deviceSnapshotReady = Signal(object)
     analysisProgressReady = Signal(int, float, str)
     analysisOutcomeReady = Signal(int, object)
+    sourceScanReady = Signal(int, object, object, str)
+    preflightReady = Signal(int, object, str)
     buildProgressReady = Signal(int, float, str)
     buildOutcomeReady = Signal(int, object)
     partialOutputChanged = Signal()
@@ -203,9 +207,18 @@ class AppController(QObject):
         self._analysis_message = ""
         self._analysis_token: CancellationToken | None = None
         self._analysis_generation = 0
+        self._source_scanning = False
+        self._bundle_size = 0
         self._analysis_started_at = 0.0
         self._analysis_log_step = ""
         self._preflight: PreflightResult | None = None
+        self._preflight_generation = 0
+        self._preflight_running = False
+        self._pending_preflight: tuple[
+            int, PreflightService, BuildRequest, DeviceSnapshot
+        ] | None = None
+        self._preflight_pending = False
+        self._preflight_preserve_notice = False
         self._build_state = "idle"
         self._build_progress = 0.0
         self._build_message = ""
@@ -279,6 +292,8 @@ class AppController(QObject):
         self.deviceSnapshotReady.connect(self._apply_device_snapshot)
         self.analysisProgressReady.connect(self._apply_analysis_progress)
         self.analysisOutcomeReady.connect(self._apply_analysis_outcome)
+        self.sourceScanReady.connect(self._apply_source_scan)
+        self.preflightReady.connect(self._apply_preflight)
         self.buildProgressReady.connect(self._apply_build_progress)
         self.buildOutcomeReady.connect(self._apply_build_outcome)
         self.installProgressReady.connect(self._apply_install_progress)
@@ -303,6 +318,8 @@ class AppController(QObject):
         return self._can_build()
 
     def _can_build(self) -> bool:
+        if self._source_scanning or self._preflight_pending:
+            return False
         if self._direct_library_update_package:
             return self._can_install_direct_library_update()
         if (
@@ -324,12 +341,25 @@ class AppController(QObject):
         if self._preflight is None or self._preflight.ready:
             return True
         failures = self._preflight.failures
-        return bool(
-            self._output_conflict()
-            and len(failures) == 1
-            and failures[0].key == "output"
-            and failures[0].detail == "The output folder already exists and is not empty."
+        return len(failures) == 1 and failures[0].key == "output" and (
+            failures[0].detail == "The output folder already exists and is not empty."
         )
+
+    @Property(bool, notify=readinessChanged)
+    def canRecheckBuild(self) -> bool:
+        return self._bundle is not None and not self.isBusy and not self.hasBuildResult and (
+            self._preflight_failed
+            or (self._preflight is not None and not self._preflight.ready)
+            or self._build_state == "failed"
+        )
+
+    @Slot()
+    def recheckBuild(self) -> None:
+        if not self.canRecheckBuild:
+            return
+        if self._build_state == "failed":
+            self._build_state = "idle"
+        self._refresh_preflight()
 
     def _can_install_direct_library_update(self) -> bool:
         return bool(
@@ -356,7 +386,8 @@ class AppController(QObject):
 
     def has_active_work(self) -> bool:
         return (
-            self._analysis_state == "running"
+            self._source_scanning
+            or self._analysis_state == "running"
             or self._build_state == "running"
             or self._install_state == "running"
             or self._signing_busy
@@ -381,9 +412,15 @@ class AppController(QObject):
         self.readinessChanged.emit()
 
     @Slot()
-    def refreshToolchainState(self) -> None:
+    def refreshToolchainState(self, *, retry_analysis: bool = False) -> None:
         """Re-run readiness after repaired tool adapters have been activated."""
         self._preflight = None
+        if (
+            retry_analysis and self._analysis_state == "error" and self._bundle is not None
+            and self._analyzer is not None and not self.isBusy
+        ):
+            self._begin_analysis(self._bundle)
+            return
         self._refresh_preflight()
         self.readinessChanged.emit()
 
@@ -564,14 +601,16 @@ class AppController(QObject):
 
     @Property(bool, notify=readinessChanged)
     def isAnalyzing(self) -> bool:
-        return self._analysis_state == "running"
+        return self._source_scanning or self._analysis_state == "running"
 
     @Property(float, notify=progressChanged)
     def analysisProgress(self) -> float:
-        return self._analysis_progress
+        return 0.0 if self._source_scanning else self._analysis_progress
 
     @Property(str, notify=progressChanged)
     def analysisLabel(self) -> str:
+        if self._source_scanning:
+            return "Looking for game files"
         if self._analysis_state == "running":
             return self._analysis_message or "Reading APK"
         if self._analysis_state == "ready":
@@ -602,7 +641,7 @@ class AppController(QObject):
 
     @Property(str, notify=bundleChanged)
     def bundleSize(self) -> str:
-        return format_bytes(self._bundle.total_size) if self._bundle else ""
+        return format_bytes(self._bundle_size) if self._bundle else ""
 
     @Property(str, notify=bundleChanged)
     def obbSummary(self) -> str:
@@ -1157,6 +1196,40 @@ class AppController(QObject):
         self._refresh_preflight(preserve_notice=self._build_result is not None)
         self._record_activity(f"Setting changed: {name} = {value}")
 
+    @Property(bool, notify=settingsChanged)
+    def showTutorialPrompt(self) -> bool:
+        return not self._settings.tutorial_prompt_seen
+
+    @Property(bool, notify=readinessChanged)
+    def tutorialSourceReady(self) -> bool:
+        return not self._source_scanning and self._analysis_state == "ready" and bool(
+            self._package_id
+        )
+
+    @Property(bool, notify=settingsChanged)
+    def showRenameThanks(self) -> bool:
+        return self._settings.successful_renames >= 2 and not self._settings.rename_thanks_seen
+
+    @Slot()
+    def markTutorialPromptShown(self) -> None:
+        if not self._settings.tutorial_prompt_seen:
+            self._commit_settings(replace(self._settings, tutorial_prompt_seen=True))
+
+    @Slot()
+    def dismissRenameThanks(self) -> None:
+        self._commit_settings(replace(self._settings, rename_thanks_seen=True))
+
+    def record_successful_rename(self, source_package: str, target_package: str) -> None:
+        count = self._settings.successful_renames
+        if source_package and source_package != target_package and count < 2:
+            self._commit_settings(replace(self._settings, successful_renames=count + 1))
+
+    @Slot()
+    def reportBug(self) -> None:
+        QDesktopServices.openUrl(QUrl(
+            "https://github.com/NotYetFound/Quest-APK-Renamer/issues/new?template=bug_report.yml"
+        ))
+
     def _commit_settings(self, updated: object) -> bool:
         """Persist a settings change; on failure show the error and keep the old value."""
         try:
@@ -1521,7 +1594,14 @@ class AppController(QObject):
 
     @Slot(QUrl)
     def chooseFolder(self, url: QUrl) -> None:
-        if self.has_active_work() or self._external_busy_provider():
+        if (
+            self._analysis_state == "running"
+            or self._build_state == "running"
+            or self._install_state == "running"
+            or self._signing_busy
+            or self._old_output_cleanup_busy
+            or self._external_busy_provider()
+        ):
             self._set_notice(
                 "Wait for the current operation to finish before choosing another source.",
                 "warning",
@@ -1530,24 +1610,49 @@ class AppController(QObject):
         local_path = local_path_from_url(url)
         if local_path is None:
             return
-        local = str(local_path)
-        source = Path(local)
+        self._analysis_generation += 1
+        self._preflight_generation += 1
+        self._pending_preflight = None
+        self._preflight_pending = False
+        self._source_scanning = True
+        self._set_notice("Looking for the APK and game files…")
+        self.readinessChanged.emit()
+        self.progressChanged.emit()
+        threading.Thread(
+            target=self._scan_source,
+            args=(self._analysis_generation, local_path),
+            daemon=True,
+        ).start()
+
+    def _scan_source(self, generation: int, source: Path) -> None:
         try:
             bundle = (
                 self._inspector.inspect_apk(source)
                 if source.is_file() and source.suffix.lower() == ".apk"
                 else self._inspector.inspect_folder(source)
             )
-        except BundleSelectionError as exc:
-            self._set_notice(str(exc), "error")
-            self._record_activity(f"Source rejected: {exc}")
+            size = bundle.total_size
+        except Exception as exc:
+            self.sourceScanReady.emit(generation, None, 0, str(exc))
             return
-        except OSError as exc:
-            self._set_notice(f"The source could not be read: {exc}", "error")
-            self._record_activity(f"Source could not be read: {exc}")
-            return
+        self.sourceScanReady.emit(generation, bundle, size, "")
 
+    @Slot(int, object, object, str)
+    def _apply_source_scan(
+        self, generation: int, bundle: BundleDraft | None, size: int, error: str
+    ) -> None:
+        if generation != self._analysis_generation:
+            return
+        self._source_scanning = False
+        self.progressChanged.emit()
+        if bundle is None:
+            self._set_notice(error or "The source could not be read.", "error")
+            self._record_activity(f"Source rejected: {error}")
+            self.readinessChanged.emit()
+            self._refresh_preflight(preserve_notice=True)
+            return
         self._bundle = bundle
+        self._bundle_size = size
         self._preflight = None
         self._preflight_failed = False
         self._reset_build_presentation()
@@ -1580,7 +1685,7 @@ class AppController(QObject):
                 ("Folder", str(bundle.root)),
                 ("APK", bundle.apk.name),
                 ("Expansion files", str(len(bundle.obbs))),
-                ("Total size", format_bytes(bundle.total_size)),
+                ("Total size", format_bytes(size)),
                 ("Detected package", bundle.package_name or "Waiting for APK analysis"),
             ),
         )
@@ -1612,22 +1717,28 @@ class AppController(QObject):
         self._sync_elapsed_timer()
         threading.Thread(
             target=self._analysis_worker,
-            args=(generation, bundle.apk, token),
+            args=(generation, bundle, token),
             daemon=True,
         ).start()
 
-    def _analysis_worker(self, generation: int, apk: Path, token: CancellationToken) -> None:
+    def _analysis_worker(
+        self, generation: int, bundle: BundleDraft, token: CancellationToken
+    ) -> None:
         assert self._analyzer is not None
         try:
             result = self._analyzer.analyze(
-                apk,
+                bundle.apk,
                 token=token,
                 progress=lambda value, message: self.analysisProgressReady.emit(
                     generation, value, message
                 ),
                 log=lambda message: self.workerLogReady.emit(f"APK analysis: {message}"),
             )
-            outcome = AnalysisOutcome(result=result)
+            token.raise_if_cancelled()
+            analyzed_bundle = self._inspector.apply_apk_identity(bundle, result.package_name)
+            outcome = AnalysisOutcome(
+                result=result, bundle=analyzed_bundle, size=analyzed_bundle.total_size
+            )
         except OperationCancelled:
             outcome = AnalysisOutcome(cancelled=True)
         except Exception as exc:  # adapter failures become a controlled UI result
@@ -1687,23 +1798,9 @@ class AppController(QObject):
             return
 
         result = raw_outcome.result
-        try:
-            analyzed_bundle = self._inspector.apply_apk_identity(
-                self._bundle,
-                result.package_name,
-            )
-        except BundleSelectionError as exc:
-            self._analysis_state = "error"
-            self._analysis_progress = 0.0
-            self._sync_elapsed_timer()
-            self._set_notice(str(exc), "error")
-            self._record_event(
-                "ANALYSIS",
-                "Expansion-file matching failed",
-                (("Package", result.package_name), ("Reason", str(exc))),
-            )
-            self.readinessChanged.emit()
-            return
+        analyzed_bundle = raw_outcome.bundle
+        assert analyzed_bundle is not None
+        self._bundle_size = raw_outcome.size
         self._older_firmware_supported = result.has_legacy_loader
         self._bundle = replace(
             analyzed_bundle,
@@ -2299,7 +2396,8 @@ class AppController(QObject):
         if not self._device.connected or not self._device.serial:
             self._set_notice("Connect and authorize one Quest before installing.", "warning")
             return
-        required = bundle.total_size - (bundle.apk.stat().st_size if retry_only else 0)
+        total_size = bundle.total_size
+        required = total_size - (bundle.apk.stat().st_size if retry_only else 0)
         if self._device.free_bytes is not None and required > self._device.free_bytes:
             self._set_notice(
                 f"This transfer needs {format_bytes(required)}, but the Quest only has "
@@ -2336,7 +2434,7 @@ class AppController(QObject):
                 ("Package", bundle.package_name),
                 ("APK", bundle.apk.name),
                 ("OBB files", str(len(bundle.obbs))),
-                ("Total size", format_bytes(bundle.total_size)),
+                ("Total size", format_bytes(total_size)),
                 ("Quest", self._device.model or self._device.serial or "Connected Quest"),
             ),
         )
@@ -2820,6 +2918,10 @@ class AppController(QObject):
         self.readinessChanged.emit()
 
     def _refresh_preflight(self, *, preserve_notice: bool = False) -> None:
+        self._preflight_generation += 1
+        self._pending_preflight = None
+        self._preflight_pending = False
+        self._preflight = None
         if self._direct_library_update_package:
             self._preflight = None
             library_error = self._library_identity_error()
@@ -2834,19 +2936,53 @@ class AppController(QObject):
             self._set_notice(library_error, "warning")
             self.readinessChanged.emit()
             return
-        if self._preflight_service is None or request is None:
+        if self._source_scanning or self._preflight_service is None or request is None:
             self.readinessChanged.emit()
             return
+        self._preflight_pending = True
+        self._preflight_preserve_notice = preserve_notice
+        self._pending_preflight = (
+            self._preflight_generation, self._preflight_service, request, self._device
+        )
+        self.readinessChanged.emit()
+        self._start_pending_preflight()
+
+    def _start_pending_preflight(self) -> None:
+        if self._preflight_running or self._pending_preflight is None:
+            return
+        pending, self._pending_preflight = self._pending_preflight, None
+        self._preflight_running = True
+        threading.Thread(target=self._check_preflight, args=pending, daemon=True).start()
+
+    def _check_preflight(
+        self, generation: int, service: PreflightService, request: BuildRequest,
+        device: DeviceSnapshot,
+    ) -> None:
         try:
-            self._preflight = self._preflight_service.check(request, device=self._device)
-        except OSError as exc:
+            result = service.check(request, device=device)
+        except Exception as exc:
+            self.preflightReady.emit(generation, None, str(exc))
+        else:
+            self.preflightReady.emit(generation, result, "")
+
+    @Slot(int, object, str)
+    def _apply_preflight(
+        self, generation: int, result: PreflightResult | None, error: str
+    ) -> None:
+        self._preflight_running = False
+        self._start_pending_preflight()
+        if generation != self._preflight_generation or self._bundle is None:
+            return
+        self._preflight_pending = False
+        if result is None:
             self._preflight = None
             self._preflight_failed = True
-            self._set_notice(f"The build checks could not finish: {exc}", "error")
-            self._record_activity(f"Preflight failed: {exc}")
+            self._set_notice(f"The build checks could not finish: {error}", "error")
+            self._record_activity(f"Preflight failed: {error}")
             self.readinessChanged.emit()
             return
         self._preflight_failed = False
+        self._preflight = result
         tone = (
             "success" if self._preflight.ready and not self._preflight.warnings else "warning"
         )
@@ -2855,7 +2991,7 @@ class AppController(QObject):
             "complete",
             "failed",
         } or self._install_state in {"running", "complete", "failed"}
-        if not preserve_notice and not busy_or_done:
+        if not self._preflight_preserve_notice and not busy_or_done:
             self._set_notice(self._preflight.summary, tone)
         self.readinessChanged.emit()
 
@@ -2874,6 +3010,9 @@ class AppController(QObject):
 
     @Slot()
     def requestBuild(self) -> None:
+        self._request_build()
+
+    def _request_build(self, *, replace_output: bool = False) -> None:
         if self._build_state == "running":
             assert self._build_token is not None
             self._build_token.cancel()
@@ -2897,12 +3036,14 @@ class AppController(QObject):
             self._start_bundle_install(self._bundle)
             return
         conflict = self._output_conflict()
-        if conflict is not None and self._can_build():
+        if not replace_output and conflict is not None and self._can_build():
             alternative = self._numbered_output(conflict)
             self._pending_output_conflict = conflict
             self.outputConflictRequested.emit(str(conflict), str(alternative))
             return
         if not self._can_build():
+            if self._source_scanning or self._preflight_pending:
+                return
             self._set_notice(
                 self._library_identity_error()
                 or self._package_error()
@@ -2913,6 +3054,7 @@ class AppController(QObject):
         assert self._build_engine is not None
         request = self._build_request()
         assert request is not None
+        request = replace(request, replace_output=replace_output)
         self._build_generation += 1
         generation = self._build_generation
         token = CancellationToken()
@@ -2960,7 +3102,7 @@ class AppController(QObject):
         self._sync_elapsed_timer()
         threading.Thread(
             target=self._build_worker,
-            args=(generation, request, token),
+            args=(generation, request, token, self._preflight_service, self._device),
             daemon=True,
         ).start()
 
@@ -2976,11 +3118,10 @@ class AppController(QObject):
     def useNumberedOutput(self) -> None:
         conflict = self._pending_output_conflict
         self._pending_output_conflict = None
-        if conflict is None:
+        if conflict is None or conflict != self._output_folder():
             return
         self._output_override = self._numbered_output(conflict)
         self.outputChanged.emit()
-        self._refresh_preflight()
         self._record_activity(f"Using available output folder: {self._output_override}")
         self.requestBuild()
 
@@ -2992,30 +3133,23 @@ class AppController(QObject):
             self._set_notice("The output folder changed. Nothing was replaced.", "warning")
             self._refresh_preflight()
             return
-        if self._move_to_trash is None:
-            self._set_notice(
-                "This system cannot move the existing output to Trash safely.", "error"
-            )
-            return
-        try:
-            self._move_to_trash(conflict)
-        except OSError as exc:
-            self._set_notice(f"The existing output could not be replaced: {exc}", "error")
-            self._record_activity(f"Existing output replacement failed: {exc}")
-            return
-        self._record_activity(f"Existing output moved to Trash: {conflict}")
-        self._preflight = None
-        self._refresh_preflight()
-        self.requestBuild()
+        self._request_build(replace_output=True)
 
     def _build_worker(
         self,
         generation: int,
         request: BuildRequest,
         token: CancellationToken,
+        preflight: PreflightService | None,
+        device: DeviceSnapshot,
     ) -> None:
         assert self._build_engine is not None
         try:
+            if preflight is not None:
+                checks = preflight.check(request, device=device)
+                if not checks.ready:
+                    raise BuildError(checks.summary)
+            token.raise_if_cancelled()
             result = self._build_engine.build(
                 request,
                 token=token,
@@ -3160,6 +3294,10 @@ class AppController(QObject):
         self._emit_signing_changed()
         self.readinessChanged.emit()
         self._handle_post_build_key_backup()
+        if completed_request is not None:
+            self.record_successful_rename(
+                completed_request.source.package_name, completed_request.package_name
+            )
 
     def _handle_post_build_key_backup(self) -> None:
         if not self._settings.sign_apks or self._signing_manager is None:
@@ -3247,6 +3385,10 @@ class AppController(QObject):
 
     @Slot()
     def startOver(self) -> None:
+        self._source_scanning = False
+        self._preflight_generation += 1
+        self._pending_preflight = None
+        self._preflight_pending = False
         if self._analysis_token is not None:
             self._analysis_token.cancel()
             self._analysis_token = None

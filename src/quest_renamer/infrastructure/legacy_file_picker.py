@@ -84,7 +84,7 @@ def linux_picker_command(
             str(start),
             "*.qarlib|Quest APK Renamer Library (*.qarlib)"
             if kind == "archive"
-            else "*.apk|Android packages (*.apk)",
+            else "*.apk *.APK|Android packages (*.apk, *.APK)",
         ]
 
     command = [helper, "--file-selection"]
@@ -110,7 +110,7 @@ def linux_picker_command(
             if kind == "save_json"
             else "Log files | *.log"
             if kind == "save_log"
-            else "Android packages | *.apk"
+            else "Android packages | *.apk *.APK"
         )
         command.append(f"--file-filter={label}")
     return command
