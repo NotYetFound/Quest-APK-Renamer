@@ -54,10 +54,14 @@ class PackageRewriterTests(unittest.TestCase):
             decoded = Path(temporary)
             manifest = decoded / "AndroidManifest.xml"
             manifest.write_text(
-                '<manifest package="com.beatgames.beatsaber"><application>'
+                '<manifest package="com.beatgames.beatsaber">'
+                '<application android:label="${applicationId}">'
+                '<activity android:name="${packageName}.MainActivity"/>'
+                '<!-- <provider android:authorities="${applicationId}.comment"/> -->'
                 '<provider android:authorities="${applicationId}.androidxstartup" '
                 'android:name="androidx.startup.InitializationProvider"/>'
-                '<provider android:authorities="${packageName}.fileprovider" '
+                "<provider android:authorities = '${packageName}.fileprovider;"
+                "${applicationId}.other;${custom}.keep' "
                 'android:name="androidx.core.content.FileProvider"/>'
                 "</application></manifest>",
                 encoding="utf-8",
@@ -71,11 +75,17 @@ class PackageRewriterTests(unittest.TestCase):
             )
 
             text = manifest.read_text(encoding="utf-8")
-            self.assertNotIn("${", text)
             self.assertIn('"com.dev.beatgames.beatsaber.androidxstartup"', text)
-            self.assertIn('"com.dev.beatgames.beatsaber.fileprovider"', text)
+            self.assertIn(
+                "'com.dev.beatgames.beatsaber.fileprovider;"
+                "com.dev.beatgames.beatsaber.other;${custom}.keep'",
+                text,
+            )
+            self.assertIn('android:name="${packageName}.MainActivity"', text)
+            self.assertIn('android:label="${applicationId}"', text)
+            self.assertIn('android:authorities="${applicationId}.comment"', text)
             self.assertIn('"androidx.startup.InitializationProvider"', text)
-            self.assertEqual(result.changed_occurrences, 3)
+            self.assertEqual(result.changed_occurrences, 4)
 
     def test_java_class_names_survive_so_native_code_still_binds(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

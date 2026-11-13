@@ -52,10 +52,38 @@ _PLACEHOLDER = re.compile(rb"\x00(\d+)\x00")
 # Gradle placeholders some mod toolchains leave unexpanded; Android takes them literally,
 # so the original and the renamed copy would claim the same provider authority.
 _GRADLE_ID_PLACEHOLDER = re.compile(r"\$\{(?:applicationId|packageName)\}")
+_MANIFEST_TOKEN = re.compile(
+    r'<!--.*?-->|<!\[CDATA\[.*?\]\]>|<(?P<tag>[\w:.-]+)(?=[\s/>])'
+    r'(?P<attributes>(?:[^"\'<>]|"[^"]*"|\'[^\']*\')*)>',
+    re.DOTALL,
+)
+_MANIFEST_ATTRIBUTE = re.compile(
+    r'(?P<prefix>(?P<name>[\w:.-]+)\s*=\s*(?P<quote>["\']))'
+    r'(?P<value>.*?)(?P=quote)',
+    re.DOTALL,
+)
 
 
-def resolve_id_placeholders(text: str, package: str) -> tuple[str, int]:
-    return _GRADLE_ID_PLACEHOLDER.subn(package, text)
+def resolve_provider_authority_placeholders(text: str, package: str) -> tuple[str, int]:
+    """Resolve only provider authority values, leaving other manifest text intact."""
+    resolved = 0
+
+    def resolve_attribute(match: re.Match[str]) -> str:
+        nonlocal resolved
+        if match["name"] != "android:authorities":
+            return match[0]
+        value, count = _GRADLE_ID_PLACEHOLDER.subn(package, match["value"])
+        resolved += count
+        return match["prefix"] + value + match["quote"]
+
+    def resolve_tag(match: re.Match[str]) -> str:
+        if match["tag"] != "provider":
+            return match[0]
+        return "<provider" + _MANIFEST_ATTRIBUTE.sub(
+            resolve_attribute, match["attributes"]
+        ) + ">"
+
+    return _MANIFEST_TOKEN.sub(resolve_tag, text), resolved
 
 
 def qualify_class_name(value: str, package: str) -> str:
@@ -214,12 +242,11 @@ def replace_package_references(
                 text, qualified_components = qualify_manifest_components(
                     data.decode("utf-8", errors="surrogateescape"), old
                 )
-                text, resolved = resolve_id_placeholders(text, new)
+                text, resolved = resolve_provider_authority_placeholders(text, new)
                 if resolved and log:
                     log(
-                        f"Resolved {resolved} unexpanded ${{applicationId}} placeholder(s) in "
-                        "the manifest so provider authorities no longer clash with the "
-                        "original app."
+                        f"Resolved {resolved} unexpanded package ID placeholder(s) "
+                        "in manifest provider authorities."
                     )
                 if not rename_java_packages:
                     text, saved = protect_manifest_values(text, old)
