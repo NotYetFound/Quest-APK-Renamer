@@ -7,7 +7,7 @@ Quest APK Renamer creates a second copy of a Meta Quest APK with a different And
 It can rename, rebuild, sign, verify, and install APKs and their OBB files directly to your Quest.
 
 Available for Windows, Linux, and macOS. Release packages include the required Android tools, so no Android SDK setup is needed.
-> This project was made with AI assistance. Expect bugs, keep backups, and use it carefully.
+> This project was made with AI assistance. Expected bugs.
 
 ![Quest APK Renamer dashboard](docs/screenshots/dashboard.png)
 ## Download
