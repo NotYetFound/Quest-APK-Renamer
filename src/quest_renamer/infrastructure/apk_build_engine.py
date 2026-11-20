@@ -36,6 +36,7 @@ from quest_renamer.infrastructure.bundle_output import (
     write_build_report,
     write_release_manifest,
 )
+from quest_renamer.infrastructure.game_fixes import GameFixContext, fixes_for
 from quest_renamer.infrastructure.older_firmware_patch import (
     PATCH_ID,
     OlderFirmwarePatchError,
@@ -296,6 +297,29 @@ class StagedApkBuildEngine:
                             "The original package ID was not found in the decoded "
                             "Android files."
                         )
+                game_fix_lines: list[str] = []
+                game_fix_context = GameFixContext(
+                    request.source.package_name,
+                    request.package_name,
+                    token,
+                    log,
+                )
+                # Game-specific fixes run only for an exactly matching source
+                # package, and only when the package ID actually changes.
+                active_fixes = (
+                    fixes_for(request.source.package_name)
+                    if request.package_name != request.source.package_name
+                    else ()
+                )
+                rewritten_by_fixes: set[str] = set()
+                for game_fix in active_fixes:
+                    decoded_result = game_fix.apply_to_decoded_apk(
+                        game_fix_context, decoded
+                    )
+                    rewritten_by_fixes.update(decoded_result.rewritten_files)
+                    game_fix_lines.extend(
+                        f"{game_fix.fix_id}: {line}" for line in decoded_result.report
+                    )
                 if request.app_label.strip() or request.app_label_suffix.strip():
                     progress(0.32, "Updating display name")
                     try:
@@ -490,6 +514,13 @@ class StagedApkBuildEngine:
                             token=token,
                             progress=report_copy,
                         )
+                        for game_fix in active_fixes:
+                            game_fix_lines.extend(
+                                f"{game_fix.fix_id}: {line}"
+                                for line in game_fix.apply_to_obb(
+                                    game_fix_context, destination
+                                )
+                            )
                         completed += source_obb.stat().st_size
                         obb_outputs.append(destination)
 
@@ -523,6 +554,17 @@ class StagedApkBuildEngine:
                     extra_outputs.append(destination)
                 if extra_outputs:
                     log(f"Copied {len(extra_outputs)} non-OBB file(s) from the OBB folder.")
+                if rewritten_by_fixes:
+                    rewrite = replace(
+                        rewrite,
+                        preserved_files=tuple(
+                            name
+                            for name in rewrite.preserved_files
+                            if name not in rewritten_by_fixes
+                        ),
+                    )
+                if game_fix_lines:
+                    rewrite = replace(rewrite, game_fixes=tuple(game_fix_lines))
 
                 progress(0.96, "Writing bundle metadata")
                 manifest = write_release_manifest(
