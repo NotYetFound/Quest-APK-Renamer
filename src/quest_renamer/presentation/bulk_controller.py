@@ -186,6 +186,7 @@ class BulkController(QObject):
     libraryBuildReady = Signal(object)
     libraryInstallReady = Signal(object)
     activityMessage = Signal(str)
+    renameSucceeded = Signal(str, str)
 
     def __init__(
         self,
@@ -918,7 +919,7 @@ class BulkController(QObject):
 
     @Slot(object)
     def _apply_library_build(self, raw: object) -> None:
-        if self._record_build is None or not isinstance(raw, tuple) or len(raw) != 4:
+        if not isinstance(raw, tuple) or len(raw) != 4:
             return
         source, target_package, result, patches = raw
         if (
@@ -927,6 +928,9 @@ class BulkController(QObject):
             or not isinstance(result, BuildResult)
             or not isinstance(patches, tuple)
         ):
+            return
+        self.renameSucceeded.emit(source.package_name, target_package)
+        if self._record_build is None:
             return
         try:
             self._record_build(source, target_package, result, patches)

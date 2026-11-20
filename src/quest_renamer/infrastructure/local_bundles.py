@@ -238,4 +238,5 @@ class LocalBundleInspector:
             game_name=metadata.get("Game Name", "").strip() or folder.name,
             package_name=package_name,
             version_code=metadata.get("Version Code", "").strip(),
+            selected_as_apk=exact_apk,
         )

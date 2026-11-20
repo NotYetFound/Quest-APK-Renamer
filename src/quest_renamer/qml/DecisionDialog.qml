@@ -6,6 +6,7 @@ Popup {
     id: popup
     property string heading: ""
     property string bodyText: ""
+    property var messageRows: []
     property string primaryText: "Continue"
     property string secondaryText: "Cancel"
     property string tertiaryText: ""
@@ -57,12 +58,13 @@ Popup {
     contentItem: ColumnLayout {
         spacing: 0
         Accessible.name: popup.heading
-        Accessible.description: popup.bodyText
+        Accessible.description: popup.messageRows.length
+            ? popup.messageRows.map(row => row.text).join(" ") : popup.bodyText
 
         ColumnLayout {
             Layout.fillWidth: true
             Layout.margins: 20
-            spacing: 9
+            spacing: popup.messageRows.length ? 12 : 9
             Text {
                 Layout.fillWidth: true
                 text: popup.heading
@@ -73,12 +75,38 @@ Popup {
             }
             Text {
                 Layout.fillWidth: true
+                visible: popup.bodyText.length > 0
                 text: popup.bodyText
                 color: "#aaaaaa"
                 font.pixelSize: 12
                 lineHeight: 1.25
                 // Long filesystem paths rarely contain spaces; allow breaking anywhere.
                 wrapMode: Text.Wrap
+            }
+            Repeater {
+                model: popup.messageRows
+                delegate: RowLayout {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    spacing: 9
+                    Image {
+                        Layout.preferredWidth: 16
+                        Layout.preferredHeight: 16
+                        Layout.alignment: Qt.AlignTop
+                        Layout.topMargin: 3
+                        source: modelData.icon
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: modelData.text
+                        textFormat: Text.PlainText
+                        color: "#f0f0f0"
+                        font.pixelSize: 16
+                        font.weight: Font.Medium
+                        lineHeight: 1.25
+                        wrapMode: Text.WordWrap
+                    }
+                }
             }
         }
 
@@ -106,6 +134,7 @@ Popup {
             AppButton {
                 id: secondaryButton
                 text: popup.secondaryText
+                visible: text.length > 0
                 onClicked: {
                     popup.actionTaken = true
                     popup.secondaryChosen()

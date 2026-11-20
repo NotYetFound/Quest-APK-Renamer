@@ -11,6 +11,7 @@ from PySide6.QtCore import QCoreApplication, QTimer, QUrl
 from PySide6.QtGui import QIcon
 from PySide6.QtQml import QQmlApplicationEngine
 from PySide6.QtQuick import QQuickWindow
+from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication
 
 from quest_renamer import __version__
@@ -155,8 +156,10 @@ def main() -> int:
 
     # The packaged QML set deliberately includes only the Basic control style.
     # Use it consistently on every desktop while still allowing an explicit
-    # developer override before startup.
-    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Basic")
+    # developer override before startup. Don't export our style to host apps
+    # launched by the file manager integration.
+    if "QT_QUICK_CONTROLS_STYLE" not in os.environ:
+        QQuickStyle.setStyle("Basic")
 
     arguments = sys.argv[1:]
     smoke_test = "--smoke-test" in arguments
@@ -305,6 +308,7 @@ def main() -> int:
 
     def activate_repaired_tools() -> None:
         nonlocal toolchain, older_firmware_asset
+        analysis_was_ready = toolchain.analysis_ready
         toolchain = resolve_toolchain(
             resource_root=package_root,
             executable=Path(sys.executable),
@@ -327,7 +331,9 @@ def main() -> int:
         )
         preflight.tools_ready = toolchain.build_ready
         preflight.tool_problems = toolchain.problems
-        controller.refreshToolchainState()
+        controller.refreshToolchainState(
+            retry_analysis=not analysis_was_ready and toolchain.analysis_ready
+        )
 
     tool_controller = ToolController(
         PinnedToolManager(
@@ -397,6 +403,7 @@ def main() -> int:
         )
     )
     bulk_controller.busyChanged.connect(controller.refreshExternalBusy)
+    bulk_controller.renameSucceeded.connect(controller.record_successful_rename)
     inspector_controller.busyChanged.connect(controller.refreshExternalBusy)
     tool_controller.busyChanged.connect(controller.refreshExternalBusy)
     bulk_controller.busyChanged.connect(tool_controller.refreshExternalBusy)
@@ -415,6 +422,9 @@ def main() -> int:
     engine.rootContext().setContextProperty("libraryController", library_controller)
     engine.rootContext().setContextProperty("updateController", update_controller)
     engine.rootContext().setContextProperty("appVersion", __version__)
+    engine.rootContext().setContextProperty(
+        "onboardingPromptsEnabled", not smoke_test and screenshot_path is None
+    )
     engine.load(QUrl.fromLocalFile(str(package_root / "qml" / "Main.qml")))
     if not engine.rootObjects():
         return 1
