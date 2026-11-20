@@ -1373,7 +1373,7 @@ ApplicationWindow {
                                                      && !appController.isBuilding
                                                      && !appController.isDirectLibraryUpdate
                                             text: appController.packageId
-                                            placeholderText: "com.dev.studio.game"
+                                            placeholderText: "com.mr.studio.game"
                                             color: window.textPrimary
                                             placeholderTextColor: "#7b8896"
                                             font.pixelSize: 14

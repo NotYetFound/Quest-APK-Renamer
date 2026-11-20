@@ -12,7 +12,7 @@ def is_valid_package_id(value: str) -> bool:
     return bool(PACKAGE_ID.fullmatch(value.strip()))
 
 
-def with_tag(package_name: str, tag: str = "dev") -> str:
+def with_tag(package_name: str, tag: str = "mr") -> str:
     """Insert a separate tag segment without changing the publisher root."""
     package_name = package_name.strip()
     tag = tag.strip().lower().lstrip(".")

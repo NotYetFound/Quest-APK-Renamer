@@ -1847,10 +1847,10 @@ class AppController(QObject):
         self._refresh_preflight(preserve_notice=library_handled)
 
     def _suggested_package(self, original: str) -> str:
-        """Original package plus the user's default tag (``.dev`` unless changed)."""
+        """Original package plus the user's default tag (``.mr`` unless changed)."""
         if not original:
             return ""
-        for tag in (self._settings.default_tag, "dev"):
+        for tag in (self._settings.default_tag, "mr"):
             try:
                 return with_tag(original, tag)
             except ValueError:
@@ -1861,7 +1861,7 @@ class AppController(QObject):
     def setDefaultTag(self, value: str) -> None:
         tag = value.strip().lstrip(".").strip()
         if not tag:
-            self._set_notice("Enter a tag such as dev, mr, or test.", "warning")
+            self._set_notice("Enter a tag such as mr, dev, or test.", "warning")
             self.settingsChanged.emit()
             return
         try:

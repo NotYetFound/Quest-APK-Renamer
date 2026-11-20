@@ -2,6 +2,15 @@
 
 All notable changes to Quest APK Renamer are recorded here.
 
+## [Unreleased]
+
+### Changed
+
+- New games are suggested with the `.mr` package-ID tag by default instead of `.dev`, because
+  Quest Game Optimizer recognises only `.mr`-tagged renamed games. Settings saved by earlier
+  versions with the old `.dev` default are switched to `.mr` once; `.dev` stays available as a
+  preset and is kept if chosen again.
+
 ## [1.5.2] - 2026-11-13
 
 ### Added

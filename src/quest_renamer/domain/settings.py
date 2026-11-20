@@ -25,7 +25,11 @@ class AppSettings:
     last_source_folder: str = ""
     last_output_parent: str = ""
     # Suggested package-ID tag (without the leading dot) for newly selected games.
-    default_tag: str = "dev"
+    default_tag: str = "mr"
+    # Migration marker: files written before the default became "mr" lack this key,
+    # and their "dev" (the old default) is switched to "mr" once on load. Every
+    # save writes it, so a later deliberate "dev" choice is kept.
+    default_tag_mr_migrated: bool = True
     # Experimental: change the launcher name of renamed copies. Off by default and,
     # while off, nothing about it appears outside Settings.
     change_display_name: bool = False
@@ -54,6 +58,8 @@ class AppSettings:
                 clean[name] = min(2, max(0, value)) if type(value) is int else 0
             else:
                 clean[name] = value if isinstance(value, type(default)) else default
+        if "default_tag_mr_migrated" not in values and clean["default_tag"] == "dev":
+            clean["default_tag"] = "mr"
         return cls(**clean)
 
     def to_mapping(self) -> dict[str, Any]:
