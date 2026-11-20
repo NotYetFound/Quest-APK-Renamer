@@ -81,6 +81,12 @@ Item {
                 onClicked: inspectorController.copySummary()
             }
             AppButton {
+                visible: inspectorController.tone === "error" && !inspectorController.isBusy
+                text: "Report a bug"
+                quiet: true
+                onClicked: appController.reportBug()
+            }
+            AppButton {
                 visible: inspectorController.hasAnalysis && !inspectorController.isBusy
                 text: "Export JSON…"
                 onClicked: fileDialogController.saveJson(

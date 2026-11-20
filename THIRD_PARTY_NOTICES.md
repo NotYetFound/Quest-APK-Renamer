@@ -22,3 +22,7 @@ the resolved Java and ADB archive hashes to `runtime/DEPENDENCY-HASHES.txt`.
 
 The sidebar navigation uses unmodified icons from Bootstrap Icons. Its full MIT license is
 distributed with the app as `assets/bootstrap-icons-LICENSE.txt`.
+
+The thank-you popup uses recolored star and issue icons from
+[GitHub Octicons](https://github.com/primer/octicons). Its MIT license is
+distributed with the app as `assets/octicons-LICENSE.txt`.

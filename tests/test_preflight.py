@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from collections import namedtuple
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +11,39 @@ from quest_renamer.services.preflight import AutomaticPreflight, default_output_
 
 
 class PreflightTests(unittest.TestCase):
+    def test_source_replacement_accepts_a_parent_path_alias(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            request = self._request(root)
+            alias = root / "alias"
+            try:
+                alias.symlink_to(request.source.root, target_is_directory=True)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"Directory symlinks unavailable: {exc}")
+            source = replace(request.source, root=alias, apk=alias / request.source.apk.name)
+            replacement = replace(
+                request, source=source, output_root=alias, replace_source=True
+            )
+            preflight = AutomaticPreflight(tools_ready=True)
+            self.assertTrue(preflight.check(replacement).ready)
+            (request.source.root / "notes.txt").touch()
+            self.assertIn("notes.txt", preflight.check(replacement).summary)
+
+    def test_skipped_game_data_does_not_consume_host_space_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            request = self._request(Path(temporary))
+            package_dir = request.source.root / request.source.package_name
+            package_dir.mkdir()
+            with (package_dir / "large.dat").open("wb") as payload:
+                payload.truncate(2 * 1024**3)
+            usage = namedtuple("Usage", ["total", "used", "free"])(0, 0, 1024**3)
+            preflight = AutomaticPreflight(tools_ready=True)
+            with patch(
+                "quest_renamer.services.preflight.shutil.disk_usage", return_value=usage
+            ):
+                self.assertFalse(preflight.check(request).ready)
+                self.assertTrue(preflight.check(replace(request, copy_obbs=False)).ready)
+
     def _request(self, root: Path, *, output: Path | None = None) -> BuildRequest:
         source = root / "game"
         source.mkdir()
@@ -115,7 +150,7 @@ class PreflightTests(unittest.TestCase):
             result = AutomaticPreflight(tools_ready=True).check(request)
 
             self.assertFalse(result.ready)
-            self.assertIn("requires OBB copying", result.summary)
+            self.assertIn("requires copying the game's OBBs", result.summary)
 
     def test_missing_tools_are_actionable(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

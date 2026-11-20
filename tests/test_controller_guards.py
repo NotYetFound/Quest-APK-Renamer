@@ -117,6 +117,7 @@ class ControllerGuardTests(unittest.TestCase):
             second = self._finished_folder(root, "second")
             controller = AppController(paths=AppPaths(data=root / "data", cache=root / "cache"))
             controller.chooseFolder(QUrl.fromLocalFile(str(first)))
+            self._wait_until(lambda: controller.hasBundle)
             self.assertEqual(Path(controller.folderPath).resolve(), first.resolve())
 
             controller._build_state = "running"
@@ -279,6 +280,7 @@ class ControllerGuardTests(unittest.TestCase):
 
             # Temp roots may be reported through symlinks (/private/var) or short
             # names (RUNNER~1); compare resolved paths.
+            self._wait_until(lambda: controller.hasBundle)
             self.assertEqual(Path(controller.lastSourceFolder).resolve(), root.resolve())
             self.assertEqual(Path(store.load().last_source_folder).resolve(), root.resolve())
 
@@ -462,6 +464,7 @@ class DefaultTagTests(unittest.TestCase):
 
             controller.chooseFolder(QUrl.fromLocalFile(str(folder)))
 
+            ControllerGuardTests._wait_until(self, lambda: controller.hasBundle)
             self.assertEqual(controller.packageId, "com.mr.example.game")
             controller.setDefaultTag("bad tag!")
             self.assertEqual(store.load().default_tag, "mr")

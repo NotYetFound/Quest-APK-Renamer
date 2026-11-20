@@ -93,6 +93,7 @@ class LibraryController(QObject):
         self._loading = False
         self._error = ""
         self._action_text = ""
+        self._failed_action = ""
         self._archive_busy = False
         self._identity_operations = 0
         self._pending_archive: Path | None = None
@@ -157,6 +158,10 @@ class LibraryController(QObject):
     @Property(str, notify=changed)
     def actionText(self) -> str:
         return self._action_text
+
+    @Property(bool, notify=changed)
+    def actionFailed(self) -> bool:
+        return bool(self._action_text) and self._action_text == self._failed_action
 
     @Property(bool, notify=changed)
     def archiveBusy(self) -> bool:
@@ -662,6 +667,7 @@ class LibraryController(QObject):
         if error:
             self._pending_archive = None
             self._action_text = error
+            self._failed_action = error
             self.changed.emit()
             self.activityMessage.emit(f"Library archive error: {error}")
             return
@@ -977,6 +983,7 @@ class LibraryController(QObject):
             return
         if error:
             self._action_text = error
+            self._failed_action = error
             self.changed.emit()
             self.activityMessage.emit(error)
             return
