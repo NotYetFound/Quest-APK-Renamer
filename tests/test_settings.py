@@ -104,9 +104,9 @@ class DefaultTagTests(unittest.TestCase):
         self.assertEqual(AppSettings().default_tag, "mr")
         self.assertEqual(with_tag("com.example.game"), "com.mr.example.game")
 
-    def test_old_saved_dev_default_is_migrated_to_mr(self) -> None:
+    def test_old_saved_dev_default_is_preserved(self) -> None:
         settings = AppSettings.from_mapping(self._old_version_payload("dev"))
-        self.assertEqual(settings.default_tag, "mr")
+        self.assertEqual(settings.default_tag, "dev")
 
     def test_old_saved_custom_tag_is_kept(self) -> None:
         settings = AppSettings.from_mapping(self._old_version_payload("test"))
@@ -117,14 +117,14 @@ class DefaultTagTests(unittest.TestCase):
         settings = AppSettings.from_mapping(chosen.to_mapping())
         self.assertEqual(settings.default_tag, "dev")
 
-    def test_store_migrates_an_old_file_once_and_keeps_a_later_dev_choice(self) -> None:
+    def test_store_preserves_an_old_file_and_a_later_dev_choice(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "settings.json"
             path.write_text(json.dumps(self._old_version_payload("dev")), encoding="utf-8")
             store = JsonSettingsStore(path)
 
             migrated = store.load()
-            self.assertEqual(migrated.default_tag, "mr")
+            self.assertEqual(migrated.default_tag, "dev")
 
             store.save(migrated.with_value("default_tag", "dev"))
             self.assertEqual(JsonSettingsStore(path).load().default_tag, "dev")
