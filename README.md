@@ -7,7 +7,7 @@ Quest APK Renamer creates a second copy of a Meta Quest APK with a different And
 It can rename, rebuild, sign, verify, and install APKs and their OBB files directly to your Quest.
 
 Available for Windows, Linux, and macOS. Release packages include the required Android tools, so no Android SDK setup is needed.
-> This project was made with AI assistance. Expect bugs, keep backups, and use it carefully.
+> This project was made with AI assistance. Expect bugs.
 
 ![Quest APK Renamer dashboard](docs/screenshots/dashboard.png)
 ## Download
@@ -20,16 +20,18 @@ Download the latest version from the [GitHub Releases page](https://github.com/N
 | Intel macOS | x86_64 DMG |
 > Windows builds are currently unsigned and macOS builds are not notarized, so your operating system may show an unknown developer warning.
 ## Quick Start
-1. Select an APK or a folder containing an APK and its OBB files.
+1. Click **Browse…** to select a game folder, or drag an APK onto the source field.
 2. Choose the new package ID. A safe suggestion is created automatically.
 3. Click **Build renamed copy**.
 4. Connect your Quest and approve USB debugging.
 5. Click **Install built game**.
 The renamed APK and OBB files are saved in a separate ` - Renamed` folder. Your original files are not modified unless **Replace source after build** is enabled.
 ## Main Features
+- Optional first-launch tutorial, replayable from Settings
 - Rename Quest APK package IDs
 - Install renamed copies beside the original game
 - Automatic APK and OBB handling
+- Preserve and install extra game data inside the OBB folder, with verification and selective retry
 - APK rebuilding, signing, and verification
 - USB and wireless ADB support
 - Automatic Quest detection

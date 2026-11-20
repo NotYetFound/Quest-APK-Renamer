@@ -175,6 +175,31 @@ class AdbInstallerTests(unittest.TestCase):
             self.assertTrue(result.package_verified)
             self.assertEqual(result.obbs[0].size, obb.stat().st_size)
 
+    def test_non_obb_files_in_the_obb_folder_are_pushed_and_verified(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adb = root / "adb"
+            adb.touch()
+            apk = root / "game.apk"
+            apk.write_bytes(b"apk")
+            data = root / "com.example.game"
+            (data / "extra").mkdir(parents=True)
+            obb = data / "main.42.com.example.game.obb"
+            obb.write_bytes(b"obb-data")
+            (data / "settings.json").write_bytes(b"{}")
+            (data / "extra" / "pack.dat").write_bytes(b"pack")
+            bundle = BundleDraft(root, apk, (obb,), package_name="com.example.game")
+            remote: dict[str, bytes] = {}
+            installer = AdbApkInstaller(runner=MemoryQuestRunner(remote))  # type: ignore[arg-type]
+
+            with patch.dict("os.environ", {"QAR_ADB": str(adb)}):
+                installer.install_bundle(bundle, "QUEST123", allow_existing=True)
+
+            base = "/sdcard/Android/obb/com.example.game"
+            self.assertEqual(remote[f"{base}/settings.json"], b"{}")
+            self.assertEqual(remote[f"{base}/extra/pack.dat"], b"pack")
+            self.assertFalse(any(".qar-new-" in path for path in remote))
+
     def test_bundle_install_rejects_a_remote_obb_size_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

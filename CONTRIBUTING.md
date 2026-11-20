@@ -49,8 +49,6 @@ Cross-platform packaging, signing, and release instructions are in
 - Update the README and changelog when the workflow or UI changes.
 - Preserve the default non-destructive workflow and the staged, rollback-safe
   guarantees of opt-in source replacement.
-- Do not introduce entitlement bypasses, store piracy features, credential
-  extraction, or broad binary patching.
 - Do not commit downloaded game bundles, signing material, or generated build
   output.
 
