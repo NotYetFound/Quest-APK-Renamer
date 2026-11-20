@@ -18,6 +18,9 @@ class AppSettings:
     key_backup_reminder: bool = True
     key_backup_folder: str = ""
     dismissed_update: str = ""
+    tutorial_prompt_seen: bool = False
+    successful_renames: int = 0
+    rename_thanks_seen: bool = False
     # Remembered dialog start folders; purely a convenience, never required.
     last_source_folder: str = ""
     last_output_parent: str = ""
@@ -47,6 +50,8 @@ class AppSettings:
             value = values.get(name)
             if isinstance(default, list):
                 clean[name] = _clean_device_list(value)
+            elif name == "successful_renames":
+                clean[name] = min(2, max(0, value)) if type(value) is int else 0
             else:
                 clean[name] = value if isinstance(value, type(default)) else default
         return cls(**clean)

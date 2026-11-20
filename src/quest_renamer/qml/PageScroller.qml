@@ -12,12 +12,19 @@ Flickable {
     property int topInset: 16
     property int bottomInset: 28
     property int wheelStep: 84
+    property real pixelScrollScale: 1.0
+    property bool scrollToMouseFocus: true
 
     contentWidth: width
     contentHeight: page ? page.implicitHeight + topInset + bottomInset : 0
     clip: true
-    // Wheel and scroll bar only; dragging the page with the mouse is not a desktop idiom.
     interactive: false
+    flickableDirection: Flickable.VerticalFlick
+    // Qt 6.9+ lets the native scroller accept wheel input without mouse dragging.
+    Component.onCompleted: {
+        if ("acceptedButtons" in flick)
+            flick.acceptedButtons = Qt.NoButton
+    }
     boundsBehavior: Flickable.StopAtBounds
     ScrollBar.vertical: AppScrollBar { id: bar }
     activeFocusOnTab: false
@@ -53,17 +60,27 @@ Flickable {
         target: flick.Window.window
         function onActiveFocusItemChanged() {
             var focused = flick.Window.window ? flick.Window.window.activeFocusItem : null
-            if (focused)
+            const control = focused as Control
+            const field = focused as TextField
+            const reason = control ? control.focusReason : field ? field.focusReason : undefined
+            if (focused && (flick.scrollToMouseFocus || reason === Qt.TabFocusReason
+                            || reason === Qt.BacktabFocusReason))
                 flick.ensureVisible(focused)
         }
     }
 
     WheelHandler {
+        target: null
         acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
         onWheel: event => {
-            var delta = event.pixelDelta.y !== 0
-                      ? event.pixelDelta.y
-                      : (event.angleDelta.y / 120) * flick.wheelStep
+            if (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0) {
+                flick.scrollBy(-event.pixelDelta.y * flick.pixelScrollScale)
+                event.accepted = true
+                return
+            }
+            var delta = event.angleDelta.y !== 0
+                      ? (event.angleDelta.y / 120) * flick.wheelStep
+                      : 0
             flick.scrollBy(-delta)
             event.accepted = true
         }
