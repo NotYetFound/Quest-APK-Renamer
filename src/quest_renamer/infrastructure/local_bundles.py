@@ -136,6 +136,16 @@ class LocalBundleInspector:
             if parse_obb_filename(path.name, package_name) is None
             and is_safe_preserved_obb(path.name)
         )
+        excluded = [
+            path.name for path in bundle.obbs if path.resolve() not in candidates
+        ]
+        if excluded:
+            raise BundleSelectionError(
+                "The selected OBB files do not match the APK's app ID "
+                f"({package_name}): {', '.join(excluded[:3])}. "
+                "Choose a complete update folder with matching APK and OBB files. "
+                "Nothing has been renamed or installed."
+            )
         return replace(
             bundle,
             obbs=tuple(sorted(candidates)),

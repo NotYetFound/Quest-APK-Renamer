@@ -698,6 +698,27 @@ class AppController(QObject):
     def isDirectLibraryUpdate(self) -> bool:
         return bool(self._direct_library_update_package)
 
+    @Property(str, notify=readinessChanged)
+    def libraryUpdateSummary(self) -> str:
+        if self._bundle is None or not (
+            self._matched_library_profile_id or self._direct_library_update_package
+        ):
+            return ""
+        if self.isAnalyzing or self._analysis_state != "ready":
+            return ""
+        count = len(self._bundle.obbs)
+        if not count:
+            return (
+                "Update: 1 APK, no OBB files found. "
+                "If this game needs OBBs, choose its complete update folder before continuing."
+            )
+        if self.isDirectLibraryUpdate:
+            return f"Update: 1 APK and {count} OBB file(s) will be installed together."
+        return (
+            f"Update: 1 APK and {count} OBB file(s) will be renamed together. "
+            "Then use Install built game to update the Quest."
+        )
+
     @Property(str, notify=outputChanged)
     def outputFolder(self) -> str:
         output = self._output_folder()
@@ -2304,7 +2325,7 @@ class AppController(QObject):
             source=self._bundle,
             package_name=self._package_id,
             output_root=output,
-            copy_obbs=self._settings.copy_obbs,
+            copy_obbs=self._settings.copy_obbs or bool(self._matched_library_profile_id),
             sign_apk=self._settings.sign_apks,
             patches=(PATCH_ID,)
             if self._settings.older_firmware_patch and self._older_firmware_available()
