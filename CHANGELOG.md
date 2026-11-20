@@ -2,6 +2,13 @@
 
 All notable changes to Quest APK Renamer are recorded here.
 
+## [Unreleased]
+
+### Changed
+
+- New installations suggest the `.mr` package-ID tag instead of `.dev` for compatibility
+  with Quest Game Optimizer. Existing saved tags are preserved, and `.dev` stays available.
+
 ## [1.5.2] - 2026-11-13
 
 ### Added

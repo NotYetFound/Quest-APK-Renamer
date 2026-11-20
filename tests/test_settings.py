@@ -90,6 +90,46 @@ class SettingsTests(unittest.TestCase):
             settings.with_value("dismissed_update", True)
 
 
+class DefaultTagTests(unittest.TestCase):
+    @staticmethod
+    def _old_version_payload(default_tag: str) -> dict[str, object]:
+        payload = AppSettings().to_mapping()
+        payload.pop("default_tag_mr_migrated", None)
+        payload["default_tag"] = default_tag
+        return payload
+
+    def test_fresh_settings_default_to_the_mr_tag(self) -> None:
+        from quest_renamer.domain.package_ids import with_tag
+
+        self.assertEqual(AppSettings().default_tag, "mr")
+        self.assertEqual(with_tag("com.example.game"), "com.mr.example.game")
+
+    def test_old_saved_dev_default_is_preserved(self) -> None:
+        settings = AppSettings.from_mapping(self._old_version_payload("dev"))
+        self.assertEqual(settings.default_tag, "dev")
+
+    def test_old_saved_custom_tag_is_kept(self) -> None:
+        settings = AppSettings.from_mapping(self._old_version_payload("test"))
+        self.assertEqual(settings.default_tag, "test")
+
+    def test_deliberate_dev_choice_survives_a_round_trip(self) -> None:
+        chosen = AppSettings().with_value("default_tag", "dev")
+        settings = AppSettings.from_mapping(chosen.to_mapping())
+        self.assertEqual(settings.default_tag, "dev")
+
+    def test_store_preserves_an_old_file_and_a_later_dev_choice(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "settings.json"
+            path.write_text(json.dumps(self._old_version_payload("dev")), encoding="utf-8")
+            store = JsonSettingsStore(path)
+
+            migrated = store.load()
+            self.assertEqual(migrated.default_tag, "dev")
+
+            store.save(migrated.with_value("default_tag", "dev"))
+            self.assertEqual(JsonSettingsStore(path).load().default_tag, "dev")
+
+
 class DisplayNameGateTests(unittest.TestCase):
     def test_display_name_feature_is_off_by_default(self) -> None:
         from quest_renamer.domain.settings import AppSettings

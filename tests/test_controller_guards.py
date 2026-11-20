@@ -13,6 +13,7 @@ from test_controller import ImmediateAnalyzer, ImmediateBundleInstaller
 
 from quest_renamer.domain.installation import BundleInstallError, BundleInstallResult
 from quest_renamer.domain.models import BundleDraft, DeviceSnapshot
+from quest_renamer.domain.settings import AppSettings
 from quest_renamer.infrastructure.app_paths import AppPaths
 from quest_renamer.infrastructure.library_store import GameLibraryStore
 from quest_renamer.infrastructure.local_bundles import LocalBundleInspector
@@ -459,15 +460,31 @@ class DefaultTagTests(unittest.TestCase):
                 settings_store=store,
                 paths=AppPaths(data=root / "data", cache=root / "cache"),
             )
-            controller.setDefaultTag(".mr")
-            self.assertEqual(store.load().default_tag, "mr")
+            controller.setDefaultTag(".test")
+            self.assertEqual(store.load().default_tag, "test")
+
+            controller.chooseFolder(QUrl.fromLocalFile(str(folder)))
+
+            ControllerGuardTests._wait_until(self, lambda: controller.hasBundle)
+            self.assertEqual(controller.packageId, "com.test.example.game")
+            controller.setDefaultTag("bad tag!")
+            self.assertEqual(store.load().default_tag, "test")
+
+    def test_invalid_saved_tag_falls_back_to_mr(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            folder = ControllerGuardTests._finished_folder(root, "Game")
+            store = JsonSettingsStore(root / "settings.json")
+            store.save(AppSettings().with_value("default_tag", "bad tag!"))
+            controller = AppController(
+                settings_store=store,
+                paths=AppPaths(data=root / "data", cache=root / "cache"),
+            )
 
             controller.chooseFolder(QUrl.fromLocalFile(str(folder)))
 
             ControllerGuardTests._wait_until(self, lambda: controller.hasBundle)
             self.assertEqual(controller.packageId, "com.mr.example.game")
-            controller.setDefaultTag("bad tag!")
-            self.assertEqual(store.load().default_tag, "mr")
 
 
 class StaticMonitor:
