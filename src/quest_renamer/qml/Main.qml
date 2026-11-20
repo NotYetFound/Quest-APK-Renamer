@@ -1316,6 +1316,15 @@ ApplicationWindow {
                                             }
                                         }
                                     }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: text.length > 0
+                                        text: appController.libraryUpdateSummary
+                                        color: appController.obbSummary === "No OBB files"
+                                               ? "#e3b74a" : window.textPrimary
+                                        font.pixelSize: 12
+                                        wrapMode: Text.WordWrap
+                                    }
                                 }
 
                             }
@@ -1373,7 +1382,7 @@ ApplicationWindow {
                                                      && !appController.isBuilding
                                                      && !appController.isDirectLibraryUpdate
                                             text: appController.packageId
-                                            placeholderText: "com.dev.studio.game"
+                                            placeholderText: "com.mr.studio.game"
                                             color: window.textPrimary
                                             placeholderTextColor: "#7b8896"
                                             font.pixelSize: 14
@@ -1853,7 +1862,6 @@ ApplicationWindow {
                                 AppButton {
                                     anchors.fill: parent
                                     text: libraryController.isLoading ? "Refreshing…" : "Refresh"
-                                    primary: true
                                     enabled: libraryController.isConnected
                                              && !libraryController.isLoading
                                              && !appController.isBusy
@@ -1871,6 +1879,31 @@ ApplicationWindow {
                             }
                         }
 
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+                            TextField {
+                                objectName: "librarySearchField"
+                                Layout.fillWidth: true
+                                placeholderText: "Search apps by name or package ID"
+                                text: libraryController.searchQuery
+                                color: window.textPrimary
+                                selectByMouse: true
+                                onTextEdited: libraryController.setSearchQuery(text)
+                                background: Rectangle {
+                                    color: "#161619"
+                                    radius: 3
+                                    border.color: parent.activeFocus ? window.accent : window.line
+                                }
+                            }
+                            AppButton {
+                                text: "Clear"
+                                quiet: true
+                                visible: libraryController.searchQuery.length > 0
+                                onClicked: libraryController.setSearchQuery("")
+                            }
+                        }
+
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.fillHeight: true
@@ -1880,7 +1913,7 @@ ApplicationWindow {
                             border.color: window.line
 
                             ColumnLayout {
-                                visible: libraryController.isEmpty
+                                visible: libraryController.isEmpty || libraryController.rows.length === 0
                                 anchors.centerIn: parent
                                 width: Math.min(parent.width - 70, 480)
                                 spacing: 12
@@ -1907,7 +1940,8 @@ ApplicationWindow {
                                 }
                                 Text {
                                     Layout.fillWidth: true
-                                    text: libraryController.statusText
+                                    text: !libraryController.isEmpty && libraryController.rows.length === 0
+                                          ? "No apps match your search" : libraryController.statusText
                                     color: window.textPrimary
                                     font.pixelSize: 12
                                     font.weight: Font.Medium
@@ -1915,7 +1949,7 @@ ApplicationWindow {
                                     wrapMode: Text.WordWrap
                                 }
                                 Text {
-                                    visible: !libraryController.isLoading
+                                    visible: !libraryController.isLoading && libraryController.isEmpty
                                     Layout.fillWidth: true
                                     text: !libraryController.isConnected
                                           ? "Keep the headset awake and approve USB debugging when prompted."
@@ -1928,7 +1962,7 @@ ApplicationWindow {
                                     wrapMode: Text.WordWrap
                                 }
                                 AppButton {
-                                    visible: libraryController.isConnected
+                                    visible: libraryController.isEmpty && libraryController.isConnected
                                              && !libraryController.isLoading
                                     Layout.alignment: Qt.AlignHCenter
                                     text: "Try again"
@@ -1940,15 +1974,19 @@ ApplicationWindow {
 
                             ListView {
                                 id: libraryList
+                                objectName: "libraryList"
                                 visible: !libraryController.isEmpty
                                 anchors.fill: parent
                                 anchors.margins: 1
                                 clip: true
                                 model: libraryController.rows
                                 reuseItems: true
-                                cacheBuffer: 188
+                                cacheBuffer: 128
+                                interactive: false
                                 boundsBehavior: Flickable.StopAtBounds
+                                ScrollWheel { viewport: libraryList }
                                 ScrollBar.vertical: AppScrollBar {}
+                                currentIndex: model.findIndex(row => row.id === libraryController.selectedId)
                                 keyNavigationEnabled: true
                                 focus: true
                                 Keys.onUpPressed: libraryController.selectOffset(-1)
@@ -1956,7 +1994,7 @@ ApplicationWindow {
                                 delegate: Rectangle {
                                             required property var modelData
                                             width: libraryList.width
-                                            height: 86
+                                            height: 64
                                             color: libraryController.selectedId === modelData.id
                                                    ? "#24242a"
                                                    : rowMouse.containsMouse ? "#202025" : "transparent"
@@ -1971,13 +2009,13 @@ ApplicationWindow {
                                             }
                                             RowLayout {
                                                 anchors.fill: parent
-                                                anchors.leftMargin: 16
-                                                anchors.rightMargin: 10
-                                                spacing: 12
+                                                anchors.leftMargin: 12
+                                                anchors.rightMargin: 16
+                                                spacing: 10
                                                 Rectangle {
-                                                    Layout.preferredWidth: 40
-                                                    Layout.preferredHeight: 40
-                                                    radius: 8
+                                                    Layout.preferredWidth: 32
+                                                    Layout.preferredHeight: 32
+                                                    radius: 4
                                                     color: "#2b2b31"
                                                     border.width: 1
                                                     border.color: "#3a3a43"
@@ -1991,7 +2029,7 @@ ApplicationWindow {
                                                         asynchronous: true
                                                         cache: true
                                                         // Decode launcher icons at display size, not 512 px.
-                                                        sourceSize: Qt.size(80, 80)
+                                                        sourceSize: Qt.size(64, 64)
                                                     }
                                                     Text {
                                                         visible: !modelData.iconUrl
@@ -2018,24 +2056,17 @@ ApplicationWindow {
                                                             font.weight: Font.DemiBold
                                                             elide: Text.ElideRight
                                                         }
-                                                        Rectangle {
-                                                            implicitWidth: libraryStatus.implicitWidth + 16
-                                                            implicitHeight: 22
-                                                            radius: 11
-                                                            color: modelData.managed ? "#263b32" : "#2e2e35"
-                                                            Text {
-                                                                id: libraryStatus
-                                                                anchors.centerIn: parent
-                                                                text: modelData.status
-                                                                color: modelData.managed ? "#78b894" : "#a8a8a8"
-                                                                font.pixelSize: 9
-                                                                font.weight: Font.DemiBold
-                                                            }
+                                                        Text {
+                                                            visible: Boolean(modelData.managed)
+                                                            text: modelData.status
+                                                            color: modelData.keyReady ? "#78b894" : "#e3b74a"
+                                                            font.pixelSize: 10
                                                         }
                                                     }
                                                     Text {
                                                         Layout.fillWidth: true
-                                                        text: modelData.targetPackage
+                                                        text: modelData.gameName !== modelData.targetPackage
+                                                              ? modelData.targetPackage : modelData.versionText
                                                         color: window.textSecondary
                                                         font.pixelSize: 10
                                                         elide: Text.ElideMiddle
@@ -2045,12 +2076,14 @@ ApplicationWindow {
                                                     spacing: 4
                                                     Text {
                                                         visible: Boolean(modelData.versionText)
+                                                                 && modelData.gameName !== modelData.targetPackage
                                                         Layout.alignment: Qt.AlignRight
                                                         text: modelData.versionText
                                                         color: window.textSecondary
                                                         font.pixelSize: 10
                                                     }
                                                     Text {
+                                                        visible: Boolean(modelData.managed)
                                                         Layout.alignment: Qt.AlignRight
                                                         text: modelData.keyStatus
                                                         color: modelData.managed
@@ -2059,18 +2092,11 @@ ApplicationWindow {
                                                         font.pixelSize: 10
                                                     }
                                                 }
-                                                AppButton {
-                                                    text: "Select"
-                                                    primary: libraryController.selectedId === modelData.id
-                                                    enabled: !appController.isBusy
-                                                    onClicked: libraryController.select(modelData.id)
-                                                }
                                             }
                                             MouseArea {
                                                 id: rowMouse
                                                 anchors.fill: parent
-                                                anchors.rightMargin: 92
-                                                enabled: true
+                                                enabled: !appController.isBusy
                                                 hoverEnabled: true
                                                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                                                 onClicked: libraryController.select(modelData.id)
@@ -2080,10 +2106,10 @@ ApplicationWindow {
                         }
 
                         Rectangle {
-                            visible: !libraryController.isEmpty
+                            visible: Boolean(libraryController.selectedId)
                                      && libraryController.isConnected
                             Layout.fillWidth: true
-                            Layout.preferredHeight: visible ? 160 : 0
+                            Layout.preferredHeight: visible ? 108 : 0
                             radius: 3
                             color: window.panel
                             border.width: 1
@@ -2096,26 +2122,26 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     spacing: 4
                                     Text {
-                                        text: "UPDATE " + (libraryController.selected.gameName || "APP").toUpperCase()
-                                        color: "#777777"
-                                        font.pixelSize: 9
+                                        Layout.fillWidth: true
+                                        text: libraryController.selected.gameName || "Selected app"
+                                        color: window.textPrimary
+                                        font.pixelSize: 12
                                         font.weight: Font.DemiBold
-                                        font.letterSpacing: 1
+                                        elide: Text.ElideRight
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: libraryController.selected.updateHelp || "Choose an update source."
-                                        color: window.textPrimary
+                                        text: libraryController.selected.identityError
+                                              || "Choose an APK or a complete game folder to update this app."
+                                        color: libraryController.selected.identityError ? "#e3b74a" : window.textSecondary
                                         font.pixelSize: 11
                                         wrapMode: Text.WordWrap
                                     }
                                     Text {
                                         Layout.fillWidth: true
-                                        text: libraryController.selected.identityError
-                                              ? "Fix or remove the damaged QAPKR identity before rebuilding this renamed app."
-                                              : libraryController.selected.managed
-                                              ? "The app will be rebuilt with the update key associated with this Quest."
-                                              : "The APK is installed unchanged so Android can verify its signature. Choose a folder to include OBB files."
+                                        visible: Boolean(libraryController.selected.managed)
+                                                 && !libraryController.selected.identityError
+                                        text: "Updates reuse this app's saved signing key."
                                         color: window.textSecondary
                                         font.pixelSize: 10
                                         elide: Text.ElideMiddle
@@ -2129,6 +2155,9 @@ ApplicationWindow {
                                         AppButton {
                                             visible: Boolean(libraryController.selected.storedOnQuest)
                                             text: "Export key…"
+                                            implicitHeight: 26
+                                            font.pixelSize: 12
+                                            quiet: true
                                             enabled: !libraryController.archiveBusy
                                             onClicked: fileDialogController.saveLibraryArchive(
                                                 "libraryExportSelected",
@@ -2140,6 +2169,9 @@ ApplicationWindow {
                                         AppButton {
                                             text: libraryController.selected.storedOnQuest
                                                   ? "Replace key…" : "Restore key…"
+                                            implicitHeight: 26
+                                            font.pixelSize: 12
+                                            quiet: true
                                             enabled: !libraryController.archiveBusy
                                             onClicked: fileDialogController.chooseLibraryArchive(
                                                 "libraryImport",
@@ -2151,14 +2183,18 @@ ApplicationWindow {
                                             visible: Boolean(libraryController.selected.storedOnQuest)
                                                      || Boolean(libraryController.selected.identityError)
                                             text: "Remove key"
+                                            implicitHeight: 26
+                                            font.pixelSize: 12
                                             danger: true
                                             enabled: !libraryController.archiveBusy
                                             onClicked: libraryDeleteDialog.open()
                                         }
                                     }
-                                    AppButton {
-                                        Layout.fillWidth: true
-                                        text: "Choose update APK…"
+                                    RowLayout {
+                                      Layout.fillWidth: true
+                                      spacing: 8
+                                      AppButton {
+                                        text: "Update APK…"
                                         enabled: libraryController.selectedId
                                                  && !appController.isBusy
                                                  && !libraryController.selected.identityError
@@ -2171,9 +2207,8 @@ ApplicationWindow {
                                             )
                                         }
                                     }
-                                    AppButton {
-                                        Layout.fillWidth: true
-                                        text: "Choose update folder…"
+                                      AppButton {
+                                        text: "Update folder…"
                                         primary: true
                                         enabled: libraryController.selectedId
                                                  && !appController.isBusy
@@ -2186,6 +2221,7 @@ ApplicationWindow {
                                                 libraryController.selected.sourcePath || ""
                                             )
                                         }
+                                      }
                                     }
                                 }
                             }

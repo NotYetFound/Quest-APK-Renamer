@@ -25,7 +25,7 @@ class AppSettings:
     last_source_folder: str = ""
     last_output_parent: str = ""
     # Suggested package-ID tag (without the leading dot) for newly selected games.
-    default_tag: str = "dev"
+    default_tag: str = "mr"
     # Experimental: change the launcher name of renamed copies. Off by default and,
     # while off, nothing about it appears outside Settings.
     change_display_name: bool = False

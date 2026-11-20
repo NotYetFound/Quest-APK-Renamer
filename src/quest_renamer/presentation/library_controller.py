@@ -50,6 +50,7 @@ class LibraryController(QObject):
     # Fired only when the visible row list is rebuilt or the view switches, so the
     # QML ListView keeps its delegates (and scroll position) on selection changes.
     rowsChanged = Signal()
+    searchChanged = Signal()
     activityMessage = Signal(str)
     inventoryReady = Signal(int, str, object, str)
     archiveReady = Signal(str, object, str)
@@ -107,6 +108,7 @@ class LibraryController(QObject):
         self._identity_errors: dict[str, str] = {}
         self._icons_by_name: dict[str, str] = {}
         self._installed_rows: list[dict[str, str | bool]] = []
+        self._search_query = ""
         self._installed_rows_by_id: dict[str, dict[str, str | bool]] = {}
         self._refresh_profile_cache()
         self.inventoryReady.connect(self._apply_inventory)
@@ -115,7 +117,38 @@ class LibraryController(QObject):
 
     @Property(list, notify=rowsChanged)
     def rows(self) -> list[dict[str, str | bool]]:
-        return self._installed_rows
+        return self._visible_rows()
+
+    def _visible_rows(self) -> list[dict[str, str | bool]]:
+        query = self._search_query.strip().casefold()
+        if not query:
+            return self._installed_rows
+        terms = query.split()
+        matches = []
+        for row in self._installed_rows:
+            searchable = " ".join(
+                str(row.get(key, "")) for key in (
+                    "gameName", "originalPackage", "targetPackage"
+                )
+            ).casefold()
+            if all(term in searchable for term in terms):
+                matches.append(row)
+        return matches
+
+    @Property(str, notify=searchChanged)
+    def searchQuery(self) -> str:
+        return self._search_query
+
+    @Slot(str)
+    def setSearchQuery(self, value: str) -> None:
+        if value == self._search_query:
+            return
+        self._search_query = value
+        if self._selected_package not in {str(row["id"]) for row in self._visible_rows()}:
+            self._selected_package = ""
+            self.changed.emit()
+        self.searchChanged.emit()
+        self.rowsChanged.emit()
 
     def _emit_rows(self) -> None:
         self.rowsChanged.emit()
@@ -259,7 +292,7 @@ class LibraryController(QObject):
     @Slot(int)
     def selectOffset(self, offset: int) -> None:
         """Move the selection up or down by ``offset`` rows (keyboard navigation)."""
-        rows = self._installed_rows
+        rows = self._visible_rows()
         if not rows:
             return
         ids = [str(row["id"]) for row in rows]

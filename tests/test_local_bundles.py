@@ -9,6 +9,19 @@ from quest_renamer.infrastructure.local_bundles import (
 
 
 class LocalBundleTests(unittest.TestCase):
+    def test_analysis_refuses_to_silently_drop_previously_discovered_obbs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "game.apk").write_bytes(b"apk")
+            obb = root / "main.2.com.other.game.obb"
+            obb.write_bytes(b"obb")
+            inspector = LocalBundleInspector()
+            initial = inspector.inspect_folder(root)
+            self.assertEqual(initial.obbs, (obb.resolve(),))
+            with self.assertRaisesRegex(BundleSelectionError, "do not match"):
+                inspector.apply_apk_identity(initial, "com.example.game")
+            self.assertEqual(obb.read_bytes(), b"obb")
+
     def test_folder_bundle_is_discovered_without_modifying_it(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -69,21 +69,10 @@ Flickable {
         }
     }
 
-    WheelHandler {
-        target: null
-        acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
-        onWheel: event => {
-            if (event.pixelDelta.x !== 0 || event.pixelDelta.y !== 0) {
-                flick.scrollBy(-event.pixelDelta.y * flick.pixelScrollScale)
-                event.accepted = true
-                return
-            }
-            var delta = event.angleDelta.y !== 0
-                      ? (event.angleDelta.y / 120) * flick.wheelStep
-                      : 0
-            flick.scrollBy(-delta)
-            event.accepted = true
-        }
+    ScrollWheel {
+        viewport: flick
+        wheelStep: flick.wheelStep
+        pixelScrollScale: flick.pixelScrollScale
     }
 
     Keys.onPressed: event => {

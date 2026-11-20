@@ -325,6 +325,21 @@ class ObbRewriteTests(unittest.TestCase):
             )
 
 class DecodedConfigTests(unittest.TestCase):
+    def test_config_must_be_json_and_obb_must_be_a_path_field(self) -> None:
+        for data in (
+            f'not json "main.{TAG}.{OLD}.obb"',
+            f'{{"unrelated":"main.{TAG}.{OLD}.obb"}}',
+            f'{{"path":"main.{TAG}.prefix{OLD}.obb"}}',
+        ):
+            with self.subTest(data=data), tempfile.TemporaryDirectory() as temporary:
+                decoded = Path(temporary)
+                config = decoded / _config()
+                config.parent.mkdir(parents=True)
+                config.write_bytes(data.encode())
+                with self.assertRaises(GameFixError):
+                    patch_decoded_expansion_paths(decoded, OLD, NEW, token=CancellationToken())
+                self.assertEqual(config.read_bytes(), data.encode())
+
     def test_single_expansion_path_is_rewritten(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             decoded = Path(temporary)

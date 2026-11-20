@@ -347,7 +347,7 @@ class ControllerTests(unittest.TestCase):
                 finally:
                     release.set()
                 self._wait_until(lambda: controller.canBuild)
-            self.assertEqual(calls, ["com.dev.example.game", "com.latest.example.game"])
+            self.assertEqual(calls, ["com.mr.example.game", "com.latest.example.game"])
 
     def test_controller_is_ready_after_a_bundle_is_selected(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -367,7 +367,7 @@ class ControllerTests(unittest.TestCase):
 
             self._wait_until(lambda: controller.hasBundle)
             self.assertTrue(controller.hasBundle)
-            self.assertEqual(controller.packageId, "com.dev.studio.game")
+            self.assertEqual(controller.packageId, "com.mr.studio.game")
             self.assertTrue(controller.canBuild)
 
     def test_single_apk_selection_is_exact_and_mr_preset_inserts_a_tag(self) -> None:
@@ -570,7 +570,7 @@ class ControllerTests(unittest.TestCase):
             self._wait_until(lambda: controller.buildActionLabel == "Open finished folder")
 
             self.assertEqual(controller.sourcePackage, "com.example.game")
-            self.assertEqual(controller.packageId, "com.dev.example.game")
+            self.assertEqual(controller.packageId, "com.mr.example.game")
             self.assertIn("built, signed", controller.notice)
             self.assertFalse(controller.showRenameThanks)
             controller.setPackageId("com.test.example.game")

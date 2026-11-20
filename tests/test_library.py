@@ -51,6 +51,32 @@ class RecordingQuestIdentityStore:
 
 
 class LibraryTests(unittest.TestCase):
+    def test_search_matches_names_and_ids_without_hiding_installed_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            library = LibraryController(
+                GameLibraryStore(root / "library.json"),
+                signing_root=root / "signing",
+                installed_apps=lambda _: (
+                    InstalledQuestApp("com.qa.studio.golf", "1", app_name="Mini Golf"),
+                    InstalledQuestApp("com.studio.chess", "2", app_name="Chess"),
+                ),
+            )
+            library.setDevice(DeviceSnapshot(True, "connected", "QUEST"))
+            self._wait_for_library(library)
+            library.setSearchQuery("GOLF")
+            self.assertEqual([row["id"] for row in library.rows], ["com.qa.studio.golf"])
+            library.selectOffset(1)
+            self.assertEqual(library.selectedId, "com.qa.studio.golf")
+            library.setSearchQuery("com.studio.chess")
+            self.assertEqual(library.selectedId, "")
+            self.assertEqual([row["gameName"] for row in library.rows], ["Chess"])
+            library.setSearchQuery("not installed")
+            self.assertEqual(library.rows, [])
+            self.assertEqual(library.count, 2)
+            library.setSearchQuery(" ")
+            self.assertEqual(len(library.rows), 2)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls.application = QCoreApplication.instance() or QCoreApplication([])
@@ -697,11 +723,26 @@ class LibraryTests(unittest.TestCase):
             self._wait_for_analysis(controller)
 
             self.assertEqual(controller.packageId, "com.qa.example.game")
+            controller.setSetting("copy_obbs", False)
+            self.assertTrue(controller._build_request().copy_obbs)
+            self.assertIn("no OBB files found", controller.libraryUpdateSummary)
             self.assertIn("Saved signing identity", controller.libraryMatch)
             request = controller._build_request()
             self.assertIsNotNone(request)
             self.assertEqual(request.signing_keystore, key)  # type: ignore[union-attr]
             self.assertEqual(request.signing_metadata, metadata)  # type: ignore[union-attr]
+            # A newer download can replace the contents without changing the folder name.
+            obb_dir = source / "com.example.game"
+            obb_dir.mkdir()
+            obb = obb_dir / "main.47.com.example.game.obb"
+            obb.write_bytes(b"updated expansion")
+            controller.chooseFolder(QUrl.fromLocalFile(str(source)))
+            self._wait_for_analysis(controller)
+            refreshed = controller._build_request()
+            self.assertIsNotNone(refreshed)
+            self.assertTrue(refreshed.copy_obbs)  # type: ignore[union-attr]
+            self.assertEqual(refreshed.source.obbs, (obb.resolve(),))  # type: ignore[union-attr]
+            self.assertIn("1 OBB", controller.libraryUpdateSummary)
 
     def test_saved_key_vault_entry_cannot_start_a_direct_quest_update(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

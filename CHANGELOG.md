@@ -12,6 +12,25 @@ All notable changes to Quest APK Renamer are recorded here.
   shipped as `lib/<abi>/libfrda.config.so`. The fix applies to this game only; every other
   package is built exactly as before. See `docs/GAME-FIXES.md`.
 
+## [1.5.3] - 2026-11-20
+
+### Added
+
+- Search installed Library apps by name or package ID.
+- Show APK/OBB update counts before proceeding.
+
+### Changed
+
+- Compact Library rows, click-to-select, and smaller update controls.
+- Library scrolling now uses the same wheel and touchpad behavior as Settings.
+- New installations suggest the `.mr` package-ID tag instead of `.dev` for compatibility
+  with Quest Game Optimizer. Existing saved tags are preserved, and `.dev` stays available.
+
+### Fixed
+
+- Managed-app updates always include recognized OBBs, even when the general copy setting is off.
+- Refuse to silently drop discovered OBBs whose package IDs do not match the selected APK.
+
 ## [1.5.2] - 2026-11-13
 
 ### Added

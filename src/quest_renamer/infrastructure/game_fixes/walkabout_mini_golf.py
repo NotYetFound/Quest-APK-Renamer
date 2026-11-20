@@ -16,6 +16,8 @@ does not fully understand. It runs only for the source package listed below.
 
 from __future__ import annotations
 
+import json
+import re
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -128,10 +130,33 @@ def rewrite_decoded_config(decoded: Path, context: GameFixContext) -> tuple[str,
             raise GameFixError(
                 f"{relative} mentions {old_package!r} outside a quoted value."
             )
-        value = data[quote_start + 1 : quote_end].rsplit(b"/", 1)[-1].lower()
-        if not value.startswith((b"main.", b"patch.")) or not value.endswith(b".obb"):
+        raw_value = data[quote_start + 1 : quote_end]
+        value = raw_value.rsplit(b"/", 1)[-1]
+        if not re.fullmatch(
+            rb"(?:main|patch)\.[A-Za-z0-9_.-]+\." + re.escape(old) + rb"\.obb", value
+        ):
             raise GameFixError(
                 f"{relative} mentions {old_package!r} outside an expansion-file path."
+            )
+        try:
+            parsed = json.loads(data)
+            expected_path = raw_value.decode("utf-8")
+        except (ValueError, UnicodeError, RecursionError) as exc:
+            raise GameFixError(
+                f"{relative} is not a valid JSON expansion configuration."
+            ) from exc
+        pending = [parsed]
+        path_found = False
+        while pending:
+            item = pending.pop()
+            if isinstance(item, dict):
+                path_found = path_found or item.get("path") == expected_path
+                pending.extend(item.values())
+            elif isinstance(item, list):
+                pending.extend(item)
+        if not path_found:
+            raise GameFixError(
+                f"{relative} mentions the OBB outside a JSON expansion-file path field."
             )
         updated = data[:index] + new + data[index + len(old) :]
         try:
@@ -149,9 +174,15 @@ def rewrite_obb_catalog(obb: Path, context: GameFixContext) -> ObbCatalogRewrite
     """Rewrite the Addressables catalog inside an OBB file, in place."""
     old_package, new_package = context.old_package, context.new_package
     token = context.token
-    if old_package == new_package or not zipfile.is_zipfile(obb):
+    if old_package == new_package:
         return None
     try:
+        if not zipfile.is_zipfile(obb):
+            with obb.open("rb") as handle:
+                signature = handle.read(4)
+            if signature in {b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"}:
+                raise GameFixError(f"{obb.name} is not a readable OBB archive.")
+            return None
         with zipfile.ZipFile(obb) as archive:
             try:
                 info = archive.getinfo(CATALOG_ENTRY)
