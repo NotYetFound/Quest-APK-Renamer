@@ -2,6 +2,16 @@
 
 All notable changes to Quest APK Renamer are recorded here.
 
+## [Unreleased]
+
+### Fixed
+
+- Walkabout Mini Golf (`com.MightyCoconut.WalkaboutMiniGolf`) renamed copies can open their
+  content again. A new per-game fix registry rewrites the expansion-file references this game
+  keeps outside the manifest: the Addressables catalog inside the OBB and the JSON configuration
+  shipped as `lib/<abi>/libfrda.config.so`. The fix applies to this game only; every other
+  package is built exactly as before. See `docs/GAME-FIXES.md`.
+
 ## [1.5.2] - 2026-11-13
 
 ### Added

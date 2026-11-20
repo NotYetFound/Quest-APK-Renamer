@@ -23,6 +23,8 @@ class PackageRewriteReport:
     # Display-name change, when one was requested and applied.
     label_before: str = ""
     label_after: str = ""
+    # Game-specific fixes applied to this build, one line per change.
+    game_fixes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

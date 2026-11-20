@@ -4,12 +4,19 @@ import os
 import shutil
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-from quest_renamer.domain.build import BuildError
+from expansion_fixtures import build_catalog, write_obb
+
+from quest_renamer.domain.build import BuildError, BuildResult
 from quest_renamer.domain.models import BuildRequest, BundleDraft
 from quest_renamer.domain.signers import SignerIdentity
+from quest_renamer.infrastructure.addressables_catalog import (
+    CATALOG_ENTRY,
+    resolve_catalog_internal_ids,
+)
 from quest_renamer.infrastructure.apk_build_engine import (
     StagedApkBuildEngine,
     activate_source_replacement,
@@ -59,6 +66,33 @@ class RecordingToolRunner(SimulatedToolRunner):
         command = tuple(str(value) for value in arguments)  # type: ignore[union-attr]
         self.commands.append(command)
         return super().run(arguments, **kwargs)
+
+
+class ExpansionPathToolRunner(SimulatedToolRunner):
+    def __init__(self, obb_name: str = "main.42.com.example.game.obb") -> None:
+        self.obb_name = obb_name
+
+    def run(self, arguments: object, **kwargs: object) -> CommandResult:
+        command = tuple(str(value) for value in arguments)  # type: ignore[union-attr]
+        result = super().run(arguments, **kwargs)
+        if "d" in command:
+            decoded = Path(command[command.index("-o") + 1])
+            package = self.obb_name.split(".", 2)[2].removesuffix(".obb")
+            (decoded / "AndroidManifest.xml").write_text(
+                f'<manifest package="{package}">'
+                '<application android:label="@string/app_name"/></manifest>',
+                encoding="utf-8",
+            )
+            (decoded / "smali" / "Main.smali").write_text(
+                f'L{package.replace(".", "/")}/Main;', encoding="utf-8"
+            )
+            config = decoded / "lib" / "arm64-v8a" / "libfrda.config.so"
+            config.parent.mkdir(parents=True)
+            config.write_text(
+                f'{{"path":"{self.obb_name}","type":"default"}}',
+                encoding="utf-8",
+            )
+        return result
 
 
 class BuildEngineTests(unittest.TestCase):
@@ -274,6 +308,53 @@ class BuildEngineTests(unittest.TestCase):
                 progress_updates,
             )
 
+    def test_game_fixes_are_skipped_when_the_package_id_is_unchanged(self) -> None:
+        class SpyFix:
+            fix_id = "spy-fix"
+            title = "Spy"
+            source_packages = frozenset({"com.example.game"})
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def apply_to_decoded_apk(self, context: object, decoded: Path) -> object:
+                self.calls += 1
+                raise AssertionError("fix must not run for an unchanged package")
+
+            def apply_to_obb(self, context: object, obb_path: Path) -> tuple[str, ...]:
+                self.calls += 1
+                raise AssertionError("fix must not run for an unchanged package")
+
+        spy = SpyFix()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            source.mkdir()
+            apk = source / "game.apk"
+            apk.write_bytes(b"original apk")
+            asset = root / "libovrplatformloader.so"
+            asset.write_bytes(b"verified fixture")
+            request = BuildRequest(
+                BundleDraft(source, apk, package_name="com.example.game"),
+                "com.example.game",
+                root / "finished",
+                patches=(PATCH_ID,),
+            )
+            engine = self._engine(root, older_firmware_asset=asset)
+            with (
+                patch(
+                    "quest_renamer.infrastructure.apk_build_engine.fixes_for",
+                    return_value=(spy,),
+                ),
+                patch(
+                    "quest_renamer.infrastructure.apk_build_engine.apply_older_firmware_patch"
+                ),
+            ):
+                result = engine.build(request)
+
+            self.assertEqual(spy.calls, 0)
+            self.assertEqual(result.rewrite.game_fixes, ())
+
     def test_same_package_identity_is_rejected_without_a_patch(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -321,6 +402,108 @@ class BuildEngineTests(unittest.TestCase):
                 self._engine(root).build(request)
 
             self.assertFalse(any(root.glob(".finished.staging-*")))
+
+    def _expansion_build(
+        self,
+        root: Path,
+        source_package: str,
+        target_package: str,
+        obb_payload: bytes,
+        logs: list[str] | None = None,
+    ) -> tuple[BuildResult, Path]:
+        source = root / "source"
+        source.mkdir()
+        apk = source / "game.apk"
+        apk.write_bytes(b"original apk")
+        obb = source / f"main.42.{source_package}.obb"
+        obb.write_bytes(obb_payload)
+        request = BuildRequest(
+            BundleDraft(
+                source,
+                apk,
+                (obb,),
+                package_name=source_package,
+                version_code="42",
+            ),
+            target_package,
+            root / "finished",
+        )
+        engine = self._engine(root)
+        engine.runner = ExpansionPathToolRunner(obb.name)  # type: ignore[assignment]
+        result = engine.build(request, log=logs.append if logs is not None else None)
+        return result, obb
+
+    def test_walkabout_pipeline_applies_and_reports_game_fixes(self) -> None:
+        old = "com.MightyCoconut.WalkaboutMiniGolf"
+        new = "com.mr.MightyCoconut.WalkaboutMiniGolf"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            catalog = build_catalog([[old, "content"]])
+            source_obb = root / "reference.obb"
+            write_obb(source_obb, catalog)
+            logs: list[str] = []
+
+            payload = source_obb.read_bytes()
+            result, obb = self._expansion_build(root, old, new, payload, logs)
+
+            self.assertEqual(obb.read_bytes(), payload)
+            self.assertEqual(result.obbs[0].name, f"main.42.{new}.obb")
+            self.assertEqual(
+                result.obbs[0].stat().st_size, len(payload) + 4 + len(new)
+            )
+            with zipfile.ZipFile(result.obbs[0]) as archive:
+                self.assertIsNone(archive.testzip())
+                internal_ids = resolve_catalog_internal_ids(
+                    archive.read(CATALOG_ENTRY)
+                )
+            self.assertEqual(internal_ids, (f"{new}/content",))
+            config_entry = "lib/arm64-v8a/libfrda.config.so"
+            self.assertEqual(len(result.rewrite.game_fixes), 2)
+            for line in result.rewrite.game_fixes:
+                self.assertTrue(line.startswith("walkabout-mini-golf-"))
+            self.assertIn(config_entry, result.rewrite.game_fixes[0])
+            self.assertNotIn(config_entry, result.rewrite.preserved_files)
+            report = json.loads(result.report.read_text(encoding="utf-8"))
+            self.assertEqual(len(report["rewrite"]["game_fixes"]), 2)
+            self.assertIn(
+                "GAME-SPECIFIC FIXES",
+                result.text_report.read_text(encoding="utf-8"),  # type: ignore[union-attr]
+            )
+            self.assertTrue(
+                any("Rewrote the expansion-file path" in line for line in logs)
+            )
+
+    def test_other_packages_are_never_touched_by_game_fixes(self) -> None:
+        old = "com.example.game"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload_path = root / "reference.obb"
+            write_obb(payload_path, build_catalog([[old, "content"]]))
+            payload = payload_path.read_bytes()
+
+            result, _obb = self._expansion_build(
+                root, old, "com.dev.example.game", payload
+            )
+
+            self.assertEqual(result.obbs[0].read_bytes(), payload)
+            self.assertEqual(result.rewrite.game_fixes, ())
+            report = json.loads(result.report.read_text(encoding="utf-8"))
+            self.assertEqual(report["rewrite"]["game_fixes"], [])
+
+    def test_other_package_with_unparseable_catalog_still_builds(self) -> None:
+        old = "com.example.game"
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            payload_path = root / "reference.obb"
+            write_obb(payload_path, bytes(64))
+            payload = payload_path.read_bytes()
+
+            result, _obb = self._expansion_build(
+                root, old, "com.dev.example.game", payload
+            )
+
+            self.assertEqual(result.obbs[0].read_bytes(), payload)
+            self.assertEqual(result.rewrite.game_fixes, ())
 
     def test_pipeline_replaces_source_only_after_build_and_trashes_original(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

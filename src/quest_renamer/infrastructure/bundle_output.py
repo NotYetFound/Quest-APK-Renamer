@@ -211,6 +211,7 @@ def write_build_report(
             "java_packages_renamed": rewrite.java_packages_renamed,
             "label_before": rewrite.label_before,
             "label_after": rewrite.label_after,
+            "game_fixes": list(rewrite.game_fixes),
         },
         "preserved_game_content": True,
         "notes": [
@@ -306,6 +307,10 @@ def write_build_report(
                 "OBB FILES",
                 "---------",
                 obb_text,
+                "",
+                "GAME-SPECIFIC FIXES",
+                "-------------------",
+                *([f"  - {line}" for line in rewrite.game_fixes] or ["  None required"]),
                 "",
                 "PRESERVED REFERENCES",
                 "--------------------",

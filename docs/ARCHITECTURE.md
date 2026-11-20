@@ -107,6 +107,9 @@ Domain models          Infrastructure adapters
   legacy "also rename Java packages" mode is refused when any is found; the default mode records
   them in the report. An optional display name / suffix is applied to the manifest label or the
   referenced `<string>` in every `values*` folder (`infrastructure/app_label.py`).
+- Game-specific fixes live in `infrastructure/game_fixes/`, one module per game, selected by
+  exact source package ID and only when the package is renamed. Other games are never touched
+  (`docs/GAME-FIXES.md`).
 - Scan patterns start with the literal package so `re` can use its prefix scan; boundary
   look-behind is checked in Python. This keeps 400 MB decodes under a second instead of ~30 s.
 - The installer prunes obsolete OBBs only when the bundle supplied the complete OBB set (or a
