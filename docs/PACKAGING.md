@@ -1,6 +1,6 @@
 # Packaging Quest APK Renamer
 
-Version 1.5 keeps the released application's **Quest APK Renamer** name, application-data paths,
+Version 1.4 keeps the released application's **Quest APK Renamer** name, application-data paths,
 Linux launcher path, Windows installer ID, and macOS bundle ID
 `io.github.questapkrenamer.app`. Installing it upgrades the legacy application while preserving
 settings and signing material.

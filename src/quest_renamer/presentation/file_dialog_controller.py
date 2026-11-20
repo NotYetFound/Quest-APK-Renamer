@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from PySide6.QtCore import QObject, QUrl, Signal, Slot
+from PySide6.QtCore import Property, QObject, QUrl, Signal, Slot
 from PySide6.QtWidgets import QFileDialog
 
 from quest_renamer.infrastructure.legacy_file_picker import (
@@ -53,6 +53,7 @@ class FileDialogController(QObject):
     saveSelected = Signal(str, QUrl)
     selectionCancelled = Signal(str)
     dialogFailed = Signal(str)
+    pickingChanged = Signal()
 
     def __init__(
         self,
@@ -70,6 +71,11 @@ class FileDialogController(QObject):
         self._legacy_picker = legacy_picker or legacy_fallback_pick
         self._clock = clock or time.monotonic
         self._platform_name = platform_name
+        self._picking = False
+
+    @Property(bool, notify=pickingChanged)
+    def isPicking(self) -> bool:
+        return self._picking
 
     def _dialog(
         self,
@@ -89,12 +95,10 @@ class FileDialogController(QObject):
             dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
         elif kind == "apks":
             dialog.setFileMode(QFileDialog.FileMode.ExistingFiles)
-            dialog.setNameFilters(["Android packages (*.apk)", "All files (*)"])
+            dialog.setNameFilters(["Android packages (*.apk *.APK)", "All files (*)"])
         elif kind == "archive":
             dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
-            dialog.setNameFilters(
-                ["Quest APK Renamer Library (*.qarlib)", "All files (*)"]
-            )
+            dialog.setNameFilters(["Quest APK Renamer Library (*.qarlib)", "All files (*)"])
         elif kind in {"save_archive", "save_json", "save_log"}:
             is_archive = kind == "save_archive"
             is_json = kind == "save_json"
@@ -110,13 +114,11 @@ class FileDialogController(QObject):
                     "All files (*)",
                 ]
             )
-            dialog.setDefaultSuffix(
-                "qarlib" if is_archive else "json" if is_json else "log"
-            )
+            dialog.setDefaultSuffix("qarlib" if is_archive else "json" if is_json else "log")
             dialog.selectFile(suggested_name)
         else:
             dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
-            dialog.setNameFilters(["Android packages (*.apk)", "All files (*)"])
+            dialog.setNameFilters(["Android packages (*.apk *.APK)", "All files (*)"])
         return dialog
 
     def _try_qt(
@@ -154,6 +156,23 @@ class FileDialogController(QObject):
         return DialogAttempt("cancelled")
 
     def _pick(
+        self,
+        kind: PickerKind,
+        title: str,
+        initial: str,
+        suggested_name: str = "",
+    ) -> tuple[Path, ...]:
+        if self._picking:
+            return ()
+        self._picking = True
+        self.pickingChanged.emit()
+        try:
+            return self._pick_impl(kind, title, initial, suggested_name)
+        finally:
+            self._picking = False
+            self.pickingChanged.emit()
+
+    def _pick_impl(
         self,
         kind: PickerKind,
         title: str,
